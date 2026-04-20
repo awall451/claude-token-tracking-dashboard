@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Token Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Claude Token Tracker</h1>
+    <span id="generated-at"></span>
+  </header>
+
+  <main>
+    <!-- Summary cards -->
+    <section class="cards" id="cards"></section>
+
+    <!-- Rolling usage / limit gauge -->
+    <section class="panel" id="rolling-panel">
+      <h2>Rolling Usage
+        <span class="limit-hint">5h window = Anthropic reset period &nbsp;|&nbsp; soft limit:
+          <input type="number" id="soft-limit" value="1100000" min="50000" step="100000" />
+          tokens
+        </span>
+      </h2>
+      <div class="rolling-grid" id="rolling-grid"></div>
+      <div class="chart-wrap" style="height:120px;margin-top:16px">
+        <canvas id="chart-sparkline"></canvas>
+      </div>
+    </section>
+
+    <!-- Caveman comparison -->
+    <section class="panel" id="caveman-panel">
+      <h2>Caveman vs Normal</h2>
+      <div class="caveman-grid">
+        <div class="cav-stat" id="cav-normal"></div>
+        <div class="cav-savings" id="cav-savings"></div>
+        <div class="cav-stat" id="cav-caveman"></div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chart-caveman"></canvas>
+      </div>
+    </section>
+
+    <!-- Tokens by day -->
+    <section class="panel">
+      <h2>Tokens by Day</h2>
+      <div class="chart-wrap tall">
+        <canvas id="chart-daily"></canvas>
+      </div>
+    </section>
+
+    <!-- By project -->
+    <section class="panel">
+      <h2>By Project</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-project"></canvas>
+      </div>
+    </section>
+
+    <!-- Model breakdown -->
+    <section class="panel half">
+      <h2>Model Usage</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-models"></canvas>
+      </div>
+    </section>
+
+    <!-- Cache efficiency -->
+    <section class="panel half">
+      <h2>Cache Efficiency</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-cache"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
