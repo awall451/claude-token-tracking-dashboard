@@ -219,15 +219,32 @@ def build_output(sessions: list[SessionStats]) -> dict:
     }
 
 
+def anonymize_output(output: dict) -> dict:
+    """Replace real project paths with generic labels (project-1, project-2, ...)."""
+    import copy
+    out = copy.deepcopy(output)
+    # Build stable mapping from real path → label (sorted for reproducibility)
+    paths = sorted(out["by_project"].keys())
+    mapping = {p: f"project-{i+1}" for i, p in enumerate(paths)}
+
+    out["by_project"] = {mapping.get(k, k): v for k, v in out["by_project"].items()}
+    for s in out["sessions"]:
+        s["project_path"] = mapping.get(s["project_path"], s["project_path"])
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Parse Claude session data → stats.json")
     parser.add_argument("--out", default="stats.json", help="Output file (default: stats.json)")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
     parser.add_argument("--summary", action="store_true", help="Print summary to stdout")
+    parser.add_argument("--anonymize", action="store_true", help="Replace project paths with generic labels")
     args = parser.parse_args()
 
     sessions = parse_all()
     output = build_output(sessions)
+    if args.anonymize:
+        output = anonymize_output(output)
 
     indent = 2 if args.pretty else None
     out_path = pathlib.Path(args.out)
