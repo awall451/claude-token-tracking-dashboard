@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 
 from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows
 
-CLAUDE_DIR = pathlib.Path.home() / ".claude"
+CLAUDE_DIR = pathlib.Path(os.environ.get("CLAUDE_DIR", str(pathlib.Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
 

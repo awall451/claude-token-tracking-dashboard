@@ -1,0 +1,13 @@
+services:
+  claude-token-tracker:
+    build: .
+    ports:
+      - "9420:9420"
+    volumes:
+      - ~/.claude:/data/.claude:ro
+    environment:
+      CLAUDE_DIR: /data/.claude
+      STATS_PATH: /data/stats.json
+      REFRESH_INTERVAL: 300   # seconds between auto-refresh
+      PORT: 9420
+    restart: unless-stopped
