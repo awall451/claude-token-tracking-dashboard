@@ -58,6 +58,7 @@ class SessionStats:
             "models": dict(self.models),
             "start_ts": self.start_ts,
             "end_ts": self.end_ts,
+            "turns_raw": self.turns_raw,
         }
 
 

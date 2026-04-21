@@ -335,6 +335,261 @@ function renderRolling(rolling, softLimit) {
   });
 }
 
+function fmtDuration(ms) {
+  if (!ms || ms <= 0) return '—';
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function fmtDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function shortModel(m) {
+  return m.replace('claude-', '').replace(/-\d{8}$/, '');
+}
+
+let _modalContextChart = null;
+let _modalTurnsChart = null;
+
+function openSessionDetail(session) {
+  const modal = document.getElementById('session-modal');
+  const turns = session.turns_raw || [];
+
+  // Destroy old charts
+  if (_modalContextChart) { _modalContextChart.destroy(); _modalContextChart = null; }
+  if (_modalTurnsChart)   { _modalTurnsChart.destroy();   _modalTurnsChart = null; }
+
+  // Header
+  const models = Object.keys(session.models || {}).map(shortModel).join(', ') || '—';
+  const duration = fmtDuration(session.end_ts - session.start_ts);
+  const modeLabel = session.caveman
+    ? `<span class="badge badge-caveman">caveman${session.caveman_mode ? ' · ' + session.caveman_mode : ''}</span>`
+    : `<span class="badge badge-normal">normal</span>`;
+  document.getElementById('modal-header').innerHTML = `
+    <h2>${shortProject(session.project_path)} &nbsp;${modeLabel}</h2>
+    <div class="modal-meta">
+      <span><strong>${fmtDate(session.start_ts)}</strong></span>
+      <span>Duration: <strong>${duration}</strong></span>
+      <span>Turns: <strong>${session.turns}</strong></span>
+      <span>Cost tokens: <strong>${fmt(session.total_cost_tokens)}</strong></span>
+      <span>Cache hit: <strong>${(session.cache_hit_rate * 100).toFixed(1)}%</strong></span>
+      <span>Model: <strong>${models}</strong></span>
+    </div>
+  `;
+
+  // Educational callout — adapt message based on session characteristics
+  const hitRate = session.cache_hit_rate;
+  const avgCtx = turns.length
+    ? Math.round(turns.reduce((s, t) => s + t.input + t.cache_read + t.cache_creation, 0) / turns.length)
+    : 0;
+  const firstCtx = turns[0] ? turns[0].input + turns[0].cache_read + turns[0].cache_creation : 0;
+  const lastCtx  = turns[turns.length - 1]
+    ? turns[turns.length - 1].input + turns[turns.length - 1].cache_read + turns[turns.length - 1].cache_creation
+    : 0;
+  const ctxGrowth = firstCtx > 0 ? Math.round((lastCtx / firstCtx - 1) * 100) : 0;
+
+  let eduMsg = `Each turn, Claude processes the <strong>entire conversation history</strong> — not just your latest message. `;
+  if (turns.length > 1 && ctxGrowth > 0) {
+    eduMsg += `This session's context grew <strong>${ctxGrowth}×</strong> from turn 1 to turn ${turns.length}. `;
+  }
+  if (hitRate > 0.5) {
+    eduMsg += `High cache hit rate (<strong>${(hitRate*100).toFixed(0)}%</strong>) means Claude re-used stored context blocks — paying ~10× less per cached token vs fresh input.`;
+  } else if (hitRate > 0) {
+    eduMsg += `Low cache hit rate (<strong>${(hitRate*100).toFixed(0)}%</strong>) — most context was read fresh. Longer sessions with repeated context amortize cache writes into cheaper reads.`;
+  } else {
+    eduMsg += `No cache hits — context was processed fresh each turn.`;
+  }
+  document.getElementById('modal-edu').innerHTML = eduMsg;
+
+  // Context growth chart
+  const turnLabels = turns.map((_, i) => `T${i + 1}`);
+  const ctxPerTurn = turns.map(t => t.input + t.cache_read + t.cache_creation);
+  _modalContextChart = new Chart(document.getElementById('modal-chart-context'), {
+    type: 'line',
+    data: {
+      labels: turnLabels,
+      datasets: [{
+        label: 'Context size (tokens)',
+        data: ctxPerTurn,
+        borderColor: COLORS.teal,
+        backgroundColor: COLORS.teal + '22',
+        borderWidth: 2,
+        pointRadius: turns.length > 30 ? 0 : 3,
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => ` Context: ${fmt(item.raw)} tokens`,
+            afterLabel: (item) => {
+              const t = turns[item.dataIndex];
+              if (!t) return '';
+              const cached = t.cache_read + t.cache_creation;
+              const hitPct = cached > 0 ? Math.round(t.cache_read / cached * 100) : 0;
+              return `  Fresh: ${fmt(t.input)}  Cached: ${fmt(t.cache_read)}  Cache hit: ${hitPct}%`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+        y: { grid: { color: '#21262d' }, ticks: { callback: fmt } },
+      },
+    },
+  });
+
+  // Per-turn composition stacked bar
+  _modalTurnsChart = new Chart(document.getElementById('modal-chart-turns'), {
+    type: 'bar',
+    data: {
+      labels: turnLabels,
+      datasets: [
+        {
+          label: 'Fresh input',
+          data: turns.map(t => t.input),
+          backgroundColor: COLORS.blue + '99',
+          borderColor: COLORS.blue,
+          borderWidth: 0,
+          stack: 'a',
+        },
+        {
+          label: 'Cache write',
+          data: turns.map(t => t.cache_creation),
+          backgroundColor: COLORS.purple + '99',
+          borderColor: COLORS.purple,
+          borderWidth: 0,
+          stack: 'a',
+        },
+        {
+          label: 'Cache read',
+          data: turns.map(t => t.cache_read),
+          backgroundColor: COLORS.green + '66',
+          borderColor: COLORS.green,
+          borderWidth: 0,
+          stack: 'a',
+        },
+        {
+          label: 'Output',
+          data: turns.map(t => t.output),
+          backgroundColor: COLORS.orange + '99',
+          borderColor: COLORS.orange,
+          borderWidth: 0,
+          stack: 'a',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            footer: (items) => `Cost: ${fmt(items.filter(i => i.datasetIndex !== 2).reduce((s, i) => s + i.raw, 0))} (cache reads excluded)`,
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+        y: { stacked: true, grid: { color: '#21262d' }, ticks: { callback: fmt } },
+      },
+    },
+  });
+
+  modal.hidden = false;
+}
+
+// Session table with client-side sort
+function renderSessionsTable(sessions) {
+  const wrap = document.getElementById('sessions-table-wrap');
+  const PAGE = 25;
+  let shown = PAGE;
+  let sortKey = 'start_ts';
+  let sortDir = -1; // -1 = desc
+
+  const sortedSessions = () => [...sessions].sort((a, b) => {
+    const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0;
+    return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+  });
+
+  const cols = [
+    { key: 'start_ts',           label: 'Date',        render: s => fmtDate(s.start_ts) },
+    { key: 'project_path',       label: 'Project',     render: s => `<span title="${s.project_path}">${shortProject(s.project_path)}</span>` },
+    { key: 'turns',              label: 'Turns',       render: s => s.turns },
+    { key: 'total_cost_tokens',  label: 'Cost Tokens', render: s => fmt(s.total_cost_tokens) },
+    { key: 'cache_hit_rate',     label: 'Cache Hit',   render: s => (s.cache_hit_rate * 100).toFixed(1) + '%' },
+    { key: 'avg_tokens_per_turn',label: 'Avg/Turn',    render: s => fmt(s.avg_tokens_per_turn) },
+    { key: 'caveman',            label: 'Mode',        render: s => s.caveman
+        ? `<span class="badge badge-caveman">${s.caveman_mode || 'caveman'}</span>`
+        : `<span class="badge badge-normal">normal</span>` },
+  ];
+
+  function render() {
+    const rows = sortedSessions().slice(0, shown);
+    const total = sessions.length;
+
+    const thead = cols.map(c => {
+      const cls = sortKey === c.key ? (sortDir === 1 ? 'sort-asc' : 'sort-desc') : '';
+      return `<th data-key="${c.key}" class="${cls}">${c.label}</th>`;
+    }).join('');
+
+    const tbody = rows.map(s => `
+      <tr data-sid="${s.session_id}">
+        ${cols.map(c => `<td>${c.render(s)}</td>`).join('')}
+      </tr>
+    `).join('');
+
+    const moreBtn = shown < total
+      ? `<button class="sessions-show-more" id="sessions-more">Show more (${total - shown} remaining)</button>`
+      : '';
+
+    wrap.innerHTML = `
+      <table class="sessions-table">
+        <thead><tr>${thead}</tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+      ${moreBtn}
+    `;
+
+    // Sort click
+    wrap.querySelectorAll('th[data-key]').forEach(th => {
+      th.addEventListener('click', () => {
+        const k = th.dataset.key;
+        if (sortKey === k) sortDir *= -1;
+        else { sortKey = k; sortDir = -1; }
+        render();
+      });
+    });
+
+    // Row click → detail modal
+    wrap.querySelectorAll('tbody tr').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const sid = tr.dataset.sid;
+        const s = sessions.find(x => x.session_id === sid);
+        if (s) openSessionDetail(s);
+      });
+    });
+
+    // Show more
+    document.getElementById('sessions-more')?.addEventListener('click', () => {
+      shown += PAGE;
+      render();
+    });
+  }
+
+  render();
+}
+
 async function main() {
   let data;
   try {
@@ -377,6 +632,18 @@ async function main() {
   renderByProject(data.by_project);
   renderModels(data.sessions);
   renderCache(data.totals);
+  renderSessionsTable([...data.sessions].reverse()); // newest first default
+
+  // Modal close
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('session-modal').hidden = true;
+  });
+  document.getElementById('session-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.hidden = true;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.getElementById('session-modal').hidden = true;
+  });
 }
 
 main();

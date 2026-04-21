@@ -75,7 +75,38 @@
         <canvas id="chart-cache"></canvas>
       </div>
     </section>
+
+    <!-- Session explorer -->
+    <section class="panel" id="sessions-panel">
+      <h2>Session Explorer <span class="sessions-hint">click any row to inspect turn-by-turn</span></h2>
+      <div id="sessions-table-wrap"></div>
+    </section>
   </main>
+
+  <!-- Session detail modal -->
+  <div id="session-modal" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <button class="modal-close" id="modal-close">✕</button>
+      <div id="modal-header"></div>
+      <div class="edu-callout" id="modal-edu"></div>
+      <div class="modal-charts">
+        <div class="modal-chart-wrap">
+          <h3>Context Window Growth</h3>
+          <p class="chart-sub">Total tokens Claude processes each turn (context grows as conversation history accumulates)</p>
+          <div class="chart-wrap" style="height:200px">
+            <canvas id="modal-chart-context"></canvas>
+          </div>
+        </div>
+        <div class="modal-chart-wrap">
+          <h3>Per-Turn Token Composition</h3>
+          <p class="chart-sub">What each turn costs — fresh input vs cache reads vs output</p>
+          <div class="chart-wrap" style="height:200px">
+            <canvas id="modal-chart-turns"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
