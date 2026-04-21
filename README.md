@@ -18,28 +18,50 @@ Dashboard for tracking Claude Code token usage from local session data. Useful i
 
 Reads `~/.claude/projects/*/` — the JSONL session files Claude Code writes locally. No API calls, no external services. All data stays local.
 
-## Usage
+## Quick start (Docker)
 
 ```bash
-# 1. Parse session data → stats.json
+docker compose up -d
+# open http://localhost:9420
+```
+
+Mounts `~/.claude` read-only. Stats refresh automatically every 5 minutes. Force a refresh anytime:
+
+```bash
+curl -X POST http://localhost:9420/api/refresh
+```
+
+### Configuration
+
+Set via environment variables in `docker-compose.yml`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `9420` | HTTP port |
+| `CLAUDE_DIR` | `/data/.claude` | Path to Claude data dir inside container |
+| `REFRESH_INTERVAL` | `300` | Seconds between auto-refresh |
+| `STATS_PATH` | `/data/stats.json` | Where parsed stats are written |
+
+## Manual usage (no Docker)
+
+```bash
+# Parse session data → stats.json
 python3 parser/parse.py
 
-# Anonymize project names (useful for screenshots/sharing)
+# Anonymize project names (for screenshots/sharing)
 python3 parser/parse.py --anonymize
 
-# 2. Serve dashboard (must run from project root)
+# Serve dashboard from project root
 python3 -m http.server 9420
-
-# 3. Open
-# http://localhost:9420/frontend/
+# open http://localhost:9420/frontend/
 ```
 
 ## Soft limit
 
-The dashboard has a configurable soft limit input (default: auto-calibrated from your historical peak 5h window + 10% headroom). Gauges go green → orange → red as you approach it.
+Dashboard has a configurable soft limit input (default: auto-calibrated from historical peak 5h window + 10% headroom). Gauges go green → orange → red as you approach it.
 
-Anthropic doesn't expose your actual quota, so this is an estimate. If you hit a real rate limit, note the 5h token count shown at that moment and set it as your limit.
+Anthropic doesn't expose actual quota. If you hit a real rate limit, note the 5h token count shown at that moment and set it as your limit.
 
 ## Requirements
 
-Python 3.10+, no dependencies. Chart.js loaded from CDN.
+Python 3.10+, no dependencies. Docker for containerized deployment. Chart.js loaded from CDN.
