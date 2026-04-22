@@ -608,23 +608,48 @@ async function main() {
   document.getElementById('generated-at').textContent = `Updated ${ts}`;
 
   const softLimitInput = document.getElementById('soft-limit');
-  // Auto-set to suggested limit derived from historical peak
-  if (data.rolling.suggested_limit) {
-    softLimitInput.value = data.rolling.suggested_limit;
+  const planSelect = document.getElementById('plan-select');
+  const planInfo = data.plan_info || {};
+  const planLimits = planInfo.limits || { standard: 600000, ultraplan_5x: 3000000, ultraplan_20x: 12000000 };
+
+  // Auto-select plan from detected tier
+  if (planInfo.detected) {
+    planSelect.value = planInfo.ultraplan ? 'ultraplan_5x' : 'standard';
+  } else {
+    planSelect.value = 'custom';
   }
+
+  // Set initial soft limit from plan selection (or historical peak if custom)
+  function applyPlanLimit() {
+    const v = planSelect.value;
+    if (v === 'custom') {
+      if (data.rolling.suggested_limit) softLimitInput.value = data.rolling.suggested_limit;
+    } else {
+      softLimitInput.value = planLimits[v] || data.rolling.suggested_limit || 1_100_000;
+    }
+    softLimitInput.disabled = (v !== 'custom');
+  }
+  applyPlanLimit();
+
   const getSoftLimit = () => parseInt(softLimitInput.value, 10) || 1_100_000;
+
+  function reRenderRolling() {
+    document.getElementById('rolling-grid').innerHTML = '';
+    Chart.getChart(document.getElementById('chart-sparkline'))?.destroy();
+    document.getElementById('rolling-panel').querySelector('div[style*="margin-top:8px"]')?.remove();
+    renderRolling(data.rolling, getSoftLimit());
+  }
 
   renderCards(data.totals);
   renderRolling(data.rolling, getSoftLimit());
 
+  planSelect.addEventListener('change', () => {
+    applyPlanLimit();
+    reRenderRolling();
+  });
+
   softLimitInput.addEventListener('change', () => {
-    // re-render rolling panel on limit change
-    document.getElementById('rolling-grid').innerHTML = '';
-    const old = document.getElementById('chart-sparkline');
-    Chart.getChart(old)?.destroy();
-    const projMsg = document.getElementById('rolling-panel').querySelector('div[style*="margin-top:8px"]');
-    if (projMsg) projMsg.remove();
-    renderRolling(data.rolling, getSoftLimit());
+    reRenderRolling();
   });
 
   renderCavemanComparison(data.caveman_comparison);
