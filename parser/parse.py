@@ -20,10 +20,33 @@ from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman
 CLAUDE_DIR = pathlib.Path(os.environ.get("CLAUDE_DIR", str(pathlib.Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
+# ~/.claude.json sits one level above CLAUDE_DIR (e.g. /data/.claude → /data/.claude.json)
+CLAUDE_JSON = CLAUDE_DIR.parent / (CLAUDE_DIR.name + ".json")
 
-# Detect caveman activation in user message content
+PLAN_LIMITS = {
+    "standard": 600_000,
+    "ultraplan_5x": 3_000_000,
+    "ultraplan_20x": 12_000_000,
+}
+
+# Detect caveman activation in user message content or hook attachments
 _CAVEMAN_RE = re.compile(r'<command-name>/caveman|caveman:caveman', re.IGNORECASE)
 _CAVEMAN_MODE_RE = re.compile(r'<command-args>(ultra|lite|full|wenyan[^\s<]*)', re.IGNORECASE)
+# Hook-based activation: "CAVEMAN MODE ACTIVE — level: ultra" or "CAVEMAN MODE ACTIVE (ultra)"
+_CAVEMAN_HOOK_RE = re.compile(r'CAVEMAN MODE ACTIVE', re.IGNORECASE)
+_CAVEMAN_HOOK_MODE_RE = re.compile(r'level:\s*(ultra|lite|full|wenyan\S*)|CAVEMAN MODE ACTIVE\s*\((ultra|lite|full|wenyan\S*)\)', re.IGNORECASE)
+
+
+def detect_plan() -> dict:
+    """Detect plan tier from ~/.claude.json GrowthBook feature flags."""
+    try:
+        data = json.loads(CLAUDE_JSON.read_text())
+        features = data.get("cachedGrowthBookFeatures", {})
+        ultraplan = features.get("tengu_ultraplan_config", {})
+        enabled = ultraplan.get("enabled", False) if isinstance(ultraplan, dict) else bool(ultraplan)
+        return {"ultraplan": enabled, "detected": True}
+    except Exception:
+        return {"ultraplan": False, "detected": False}
 
 
 def decode_project_path(encoded: str) -> str:
@@ -122,6 +145,22 @@ def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str]) ->
                 elif not caveman_mode:
                     caveman_mode = "full"
 
+        elif entry_type == "attachment":
+            # Hook-injected caveman activation (hook_success / hook_additional_context)
+            att = obj.get("attachment", {})
+            att_type = att.get("type", "")
+            if att_type in ("hook_success", "hook_additional_context"):
+                content = att.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(str(c) for c in content)
+                if _CAVEMAN_HOOK_RE.search(content):
+                    caveman_detected = True
+                    m = _CAVEMAN_HOOK_MODE_RE.search(content)
+                    if m and not caveman_mode:
+                        caveman_mode = (m.group(1) or m.group(2) or "full").lower()
+                    elif not caveman_mode:
+                        caveman_mode = "full"
+
         elif entry_type == "assistant":
             request_id = obj.get("requestId", "")
             if request_id and request_id in seen_request_ids:
@@ -200,8 +239,17 @@ def build_output(sessions: list[SessionStats]) -> dict:
     for s in sessions:
         all_turns.extend(getattr(s, 'turns_raw', []))
 
+    plan_info = detect_plan()
+    if plan_info["ultraplan"]:
+        plan_info["suggested_limit"] = PLAN_LIMITS["ultraplan_5x"]
+        plan_info["limits"] = PLAN_LIMITS
+    else:
+        plan_info["suggested_limit"] = PLAN_LIMITS["standard"]
+        plan_info["limits"] = PLAN_LIMITS
+
     return {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "plan_info": plan_info,
         "rolling": rolling_windows(all_turns),
         "totals": {
             "sessions": len(sessions),

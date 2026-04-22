@@ -20,7 +20,14 @@
     <!-- Rolling usage / limit gauge -->
     <section class="panel" id="rolling-panel">
       <h2>Rolling Usage
-        <span class="limit-hint">5h window = Anthropic reset period &nbsp;|&nbsp; soft limit:
+        <span class="limit-hint">5h window = Anthropic reset period &nbsp;|&nbsp; plan:
+          <select id="plan-select">
+            <option value="standard">$20 Max (~600K)</option>
+            <option value="ultraplan_5x">5x Max (~3M)</option>
+            <option value="ultraplan_20x">20x Max (~12M)</option>
+            <option value="custom">Custom</option>
+          </select>
+          &nbsp; soft limit:
           <input type="number" id="soft-limit" value="1100000" min="50000" step="100000" />
           tokens
         </span>
