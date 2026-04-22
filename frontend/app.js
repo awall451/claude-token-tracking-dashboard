@@ -369,8 +369,12 @@ function openSessionDetail(session) {
   const modeLabel = session.caveman
     ? `<span class="badge badge-caveman">caveman${session.caveman_mode ? ' · ' + session.caveman_mode : ''}</span>`
     : `<span class="badge badge-normal">normal</span>`;
+  const sessionNameHtml = session.session_name
+    ? `<div class="modal-session-name" title="${session.session_name.replace(/"/g, '&quot;')}">${session.session_name.replace(/</g, '&lt;').slice(0, 120)}</div>`
+    : '';
   document.getElementById('modal-header').innerHTML = `
     <h2>${shortProject(session.project_path)} &nbsp;${modeLabel}</h2>
+    ${sessionNameHtml}
     <div class="modal-meta">
       <span><strong>${fmtDate(session.start_ts)}</strong></span>
       <span>Duration: <strong>${duration}</strong></span>
@@ -524,7 +528,13 @@ function renderSessionsTable(sessions) {
 
   const cols = [
     { key: 'start_ts',           label: 'Date',        render: s => fmtDate(s.start_ts) },
-    { key: 'project_path',       label: 'Project',     render: s => `<span title="${s.project_path}">${shortProject(s.project_path)}</span>` },
+    { key: 'project_path',       label: 'Project',     render: s => {
+      const proj = shortProject(s.project_path);
+      const name = s.session_name ? s.session_name.replace(/</g, '&lt;').slice(0, 60) : '';
+      const display = name ? `${proj}/<span class="session-name">${name}</span>` : proj;
+      const title = name ? `${s.project_path}\n${s.session_name}` : s.project_path;
+      return `<span title="${title}">${display}</span>`;
+    }},
     { key: 'turns',              label: 'Turns',       render: s => s.turns },
     { key: 'total_cost_tokens',  label: 'Cost Tokens', render: s => fmt(s.total_cost_tokens) },
     { key: 'cache_hit_rate',     label: 'Cache Hit',   render: s => (s.cache_hit_rate * 100).toFixed(1) + '%' },

@@ -8,6 +8,7 @@ import time
 class SessionStats:
     session_id: str
     project_path: str
+    session_name: str = ""
     caveman: bool = False
     caveman_mode: str = ""  # lite/full/ultra/wenyan-* or ""
     turns: int = 0
@@ -44,6 +45,7 @@ class SessionStats:
         return {
             "session_id": self.session_id,
             "project_path": self.project_path,
+            "session_name": self.session_name,
             "caveman": self.caveman,
             "caveman_mode": self.caveman_mode,
             "turns": self.turns,
