@@ -55,6 +55,17 @@ Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheap
 
 **Timestamps:** Unix milliseconds.
 
+## UI Design Philosophy
+
+**Hints and tooltips are first-class citizens.** Always look for opportunities to add them:
+
+- **Callout boxes** — use the `.edu-callout` style for explaining non-obvious concepts near charts/tables (e.g. "Each turn Claude processes the entire conversation history"). Dynamically populate values from real session data where possible.
+- **Subtitle hints** — small muted text under section headers explaining what the data means (e.g. "Total tokens Claude processes each turn (context grows as conversation history accumulates)").
+- **`title` attribute tooltips** — add to any abbreviated, truncated, or non-obvious value (e.g. truncated session names, token counts, percentages). Free, zero-JS.
+- **Chart subtitles** — every chart should have a one-line description of what it shows, not just a title.
+
+When adding a new UI element, ask: *would a first-time user understand this without context?* If no, add a hint.
+
 ## Remotes & Mirroring
 
 Two remotes must always stay in sync — treat them as mirrors:
