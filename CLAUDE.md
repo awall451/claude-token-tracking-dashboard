@@ -55,6 +55,36 @@ Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheap
 
 **Timestamps:** Unix milliseconds.
 
+## UI Design Philosophy
+
+**Hints and tooltips are first-class citizens.** Always look for opportunities to add them:
+
+- **Callout boxes** — use the `.edu-callout` style for explaining non-obvious concepts near charts/tables (e.g. "Each turn Claude processes the entire conversation history"). Dynamically populate values from real session data where possible.
+- **Subtitle hints** — small muted text under section headers explaining what the data means (e.g. "Total tokens Claude processes each turn (context grows as conversation history accumulates)").
+- **`title` attribute tooltips** — add to any abbreviated, truncated, or non-obvious value (e.g. truncated session names, token counts, percentages). Free, zero-JS.
+- **Chart subtitles** — every chart should have a one-line description of what it shows, not just a title.
+
+When adding a new UI element, ask: *would a first-time user understand this without context?* If no, add a hint.
+
+## Remotes & Mirroring
+
+Two remotes must always stay in sync — treat them as mirrors:
+
+| Remote | URL |
+|--------|-----|
+| `origin` | https://github.com/awall451/claude-token-tracking-dashboard |
+| `gitea` | git@git.projectorion.net:dillon/claude-token-tracking |
+
+**Push rule:** always push to both in every session:
+```bash
+git push gitea <branch> && git push origin <branch>
+```
+
+**PR rule:** create a PR in both repos for every feature branch:
+- GitHub: `gh pr create --repo awall451/claude-token-tracking-dashboard --base main --head <branch>`
+- Gitea: `curl -X POST https://git.projectorion.net/api/v1/repos/dillon/claude-token-tracking/pulls -H "Authorization: token $GITEA_TOKEN" ...`
+  - Requires `GITEA_TOKEN` env var (Gitea personal access token). If unset, provide the PR URL from `git push` output to the user and ask them to open it manually.
+
 ## Permissions & Workflow
 
 For any task in this project:
@@ -62,7 +92,8 @@ For any task in this project:
 2. After edits, deploy to local Docker: `docker compose build --no-cache --pull=false && docker compose up -d`
 3. Validate via `curl http://localhost:9420/api/status` and spot-check `stats.json`
 4. If broken, diagnose and fix, repeat until working
-5. After completion, suggest further improvements if any
+5. Push to both remotes and create PRs in both (see Remotes & Mirroring above)
+6. After completion, suggest further improvements if any
 
 ## TODO
 

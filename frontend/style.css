@@ -316,6 +316,11 @@ main {
 
 .sessions-table tbody tr:hover { background: #1c2128; }
 
+.session-name {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .badge {
   display: inline-block;
   padding: 1px 6px;
@@ -393,6 +398,16 @@ main {
   font-weight: 600;
   margin-bottom: 10px;
   color: var(--text);
+}
+
+.modal-session-name {
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 600px;
 }
 
 .modal-meta {

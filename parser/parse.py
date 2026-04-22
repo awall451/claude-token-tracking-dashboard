@@ -76,6 +76,45 @@ def load_history() -> dict[str, str]:
     return mapping
 
 
+def load_session_names() -> dict[str, str]:
+    """Returns {sessionId: name}. Prefers /rename custom-title; falls back to first display text."""
+    names = {}
+    # Fallback: first non-init display from history.jsonl
+    if HISTORY_FILE.exists():
+        for line in HISTORY_FILE.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                sid = obj.get("sessionId")
+                display = obj.get("display", "")
+                if sid and display and display != "init" and sid not in names:
+                    names[sid] = display
+            except json.JSONDecodeError:
+                continue
+    # Override with custom-title (/rename) entries found in session JSONL files
+    if PROJECTS_DIR.exists():
+        for project_dir in PROJECTS_DIR.iterdir():
+            if not project_dir.is_dir():
+                continue
+            for jsonl_file in project_dir.glob("*.jsonl"):
+                for line in jsonl_file.read_text(errors="replace").splitlines():
+                    line = line.strip()
+                    if not line or "custom-title" not in line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("type") == "custom-title":
+                            sid = obj.get("sessionId") or jsonl_file.stem
+                            title = obj.get("customTitle", "")
+                            if sid and title:
+                                names[sid] = title
+                    except json.JSONDecodeError:
+                        continue
+    return names
+
+
 def _text_content(message: dict) -> str:
     """Extract plain text from a message object (str or list of content blocks)."""
     content = message.get("content", "")
@@ -90,13 +129,14 @@ def _text_content(message: dict) -> str:
     return ""
 
 
-def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str]) -> SessionStats | None:
+def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str], name_map: dict[str, str] | None = None) -> SessionStats | None:
     """Parse one session JSONL file into a SessionStats."""
     seen_request_ids: set[str] = set()
     session_id = jsonl_path.stem
     project_path = history_map.get(session_id, "")
+    session_name = (name_map or {}).get(session_id, "")
 
-    stats = SessionStats(session_id=session_id, project_path=project_path)
+    stats = SessionStats(session_id=session_id, project_path=project_path, session_name=session_name)
     turns_raw: list[dict] = []  # per-turn records for rolling window calc
     caveman_detected = False
     caveman_mode = ""
@@ -209,6 +249,7 @@ def parse_all() -> list[SessionStats]:
         sys.exit(1)
 
     history_map = load_history()
+    name_map = load_session_names()
     sessions = []
 
     for project_dir in sorted(PROJECTS_DIR.iterdir()):
@@ -216,7 +257,7 @@ def parse_all() -> list[SessionStats]:
             continue
         fallback_path = decode_project_path(project_dir.name)
         for jsonl_file in sorted(project_dir.glob("*.jsonl")):
-            stats = parse_session_file(jsonl_file, history_map)
+            stats = parse_session_file(jsonl_file, history_map, name_map)
             if stats is None:
                 continue
             if not stats.project_path:
