@@ -51,7 +51,11 @@ Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheap
 
 **Duplicate entries:** Streaming causes multiple assistant entries per request. Always deduplicate by `requestId` before summing usage.
 
-**Caveman detection:** Scan `user` entries for `<command-name>/caveman` or `caveman:caveman` in `message.content`. Tag the entire session as caveman if any turn matches. Mode variant (lite/full/ultra/wenyan) extracted from `<command-args>` tag.
+**Caveman detection:** Two paths — (1) scan `user` entries for `<command-name>/caveman` or `caveman:caveman` in `message.content`, (2) scan `attachment` entries (type `hook_success` / `hook_additional_context`) for `CAVEMAN MODE ACTIVE` (hook-injected sessions). Tag the entire session as caveman if any turn matches. Mode variant (lite/full/ultra/wenyan) extracted from `<command-args>` tag or hook `level: X` text.
+
+**Caveman plugin install detection:** `_detect_caveman_plugin()` in `parse.py` checks `~/.claude/settings.json` for `enabledPlugins` keys containing `"caveman"`, falls back to checking `~/.claude/plugins/marketplaces/caveman/` directory. Emitted as `has_caveman_plugin` at top level of `stats.json` — frontend uses it to decide between onboarding callout, "no data yet" hint, or full comparison.
+
+**Per-mode breakdown:** `caveman_comparison()` emits `by_mode` dict keyed by mode name (`normal`, `lite`, `full`, `ultra`, `wenyan` — wenyan-* variants normalized to `wenyan`). Frontend renders as bar chart in the caveman panel.
 
 **Timestamps:** Unix milliseconds.
 

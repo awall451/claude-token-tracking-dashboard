@@ -74,6 +74,7 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
         "turns": 0,
         "sessions": 0,
         "caveman_sessions": 0,
+        "normal_sessions": 0,
     })
     for s in sessions:
         if not s.start_ts:
@@ -90,6 +91,8 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
         d["sessions"] += 1
         if s.caveman:
             d["caveman_sessions"] += 1
+        else:
+            d["normal_sessions"] += 1
     return dict(sorted(by_day.items()))
 
 
@@ -120,11 +123,18 @@ def aggregate_by_project(sessions: list[SessionStats]) -> dict:
 
 def caveman_comparison(sessions: list[SessionStats]) -> dict:
     groups = {"caveman": [], "normal": []}
+    by_mode: dict = defaultdict(list)
+
     for s in sessions:
         if s.turns == 0:
             continue
-        key = "caveman" if s.caveman else "normal"
-        groups[key].append(s)
+        if s.caveman:
+            groups["caveman"].append(s)
+            mode_key = "wenyan" if (s.caveman_mode or "full").startswith("wenyan") else (s.caveman_mode or "full")
+            by_mode[mode_key].append(s)
+        else:
+            groups["normal"].append(s)
+            by_mode["normal"].append(s)
 
     def stats(sess_list):
         if not sess_list:
@@ -145,10 +155,20 @@ def caveman_comparison(sessions: list[SessionStats]) -> dict:
     if n["avg_tokens_per_turn"] > 0 and c["avg_tokens_per_turn"] > 0:
         savings_pct = round((1 - c["avg_tokens_per_turn"] / n["avg_tokens_per_turn"]) * 100, 1)
 
+    canonical = ["normal", "lite", "full", "ultra", "wenyan"]
+    mode_stats = {}
+    for mode in canonical:
+        if mode in by_mode:
+            mode_stats[mode] = stats(by_mode[mode])
+    for mode, sess_list in by_mode.items():
+        if mode not in mode_stats:
+            mode_stats[mode] = stats(sess_list)
+
     return {
         "caveman": c,
         "normal": n,
         "savings_pct": savings_pct,
+        "by_mode": mode_stats,
     }
 
 

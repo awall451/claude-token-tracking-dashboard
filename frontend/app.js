@@ -47,8 +47,23 @@ function renderCards(totals) {
   `).join('');
 }
 
-function renderCavemanComparison(cc) {
+function renderCavemanComparison(data) {
+  const cc = data.caveman_comparison;
   const { caveman, normal, savings_pct } = cc;
+  const noPlugin = !data.has_caveman_plugin;
+  const noData = caveman.sessions === 0;
+
+  if (noPlugin && noData) {
+    document.getElementById('caveman-onboarding').hidden = false;
+    document.getElementById('caveman-data').hidden = true;
+    return;
+  }
+
+  if (!noPlugin && noData) {
+    document.getElementById('caveman-no-data').hidden = false;
+    document.getElementById('caveman-data').hidden = true;
+    return;
+  }
 
   document.getElementById('cav-normal').innerHTML = `
     <div class="mode">Normal</div>
@@ -72,15 +87,34 @@ function renderCavemanComparison(cc) {
     <div class="sub">caveman vs normal</div>
   `;
 
-  new Chart(document.getElementById('chart-caveman'), {
+  renderCavemanModes(cc.by_mode || {});
+}
+
+const MODE_COLORS = {
+  normal: COLORS.blue,
+  lite:   '#7ee787',
+  full:   COLORS.orange,
+  ultra:  COLORS.red,
+  wenyan: COLORS.purple,
+};
+
+function renderCavemanModes(byMode) {
+  const CANONICAL = ['normal', 'lite', 'full', 'ultra', 'wenyan'];
+  const modes = [
+    ...CANONICAL.filter(m => byMode[m] && byMode[m].avg_tokens_per_turn > 0),
+    ...Object.keys(byMode).filter(m => !CANONICAL.includes(m) && byMode[m].avg_tokens_per_turn > 0),
+  ];
+  if (modes.length < 2) return; // nothing interesting to show with only 1 mode
+
+  new Chart(document.getElementById('chart-caveman-modes'), {
     type: 'bar',
     data: {
-      labels: ['Normal', 'Caveman'],
+      labels: modes.map(m => m.charAt(0).toUpperCase() + m.slice(1)),
       datasets: [{
         label: 'Avg tokens/turn',
-        data: [normal.avg_tokens_per_turn, caveman.avg_tokens_per_turn],
-        backgroundColor: [COLORS.blue + '99', COLORS.orange + '99'],
-        borderColor: [COLORS.blue, COLORS.orange],
+        data: modes.map(m => byMode[m].avg_tokens_per_turn),
+        backgroundColor: modes.map(m => (MODE_COLORS[m] || COLORS.muted) + '99'),
+        borderColor: modes.map(m => MODE_COLORS[m] || COLORS.muted),
         borderWidth: 1,
         borderRadius: 4,
       }],
@@ -88,10 +122,69 @@ function renderCavemanComparison(cc) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterLabel: (item) => {
+              const s = byMode[modes[item.dataIndex]];
+              return `${s.sessions} sessions · ${fmt(s.turns)} turns`;
+            },
+          },
+        },
+      },
       scales: {
         y: { beginAtZero: true, grid: { color: '#21262d' } },
         x: { grid: { display: false } },
+      },
+    },
+  });
+}
+
+function renderCavemanAdoption(byDay) {
+  const days = Object.keys(byDay).slice(-60);
+  const dayData = days.map(d => byDay[d]);
+
+  new Chart(document.getElementById('chart-caveman-adoption'), {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [
+        {
+          label: 'Normal',
+          data: dayData.map(d => d.normal_sessions || 0),
+          backgroundColor: COLORS.blue + '99',
+          borderColor: COLORS.blue,
+          borderWidth: 1,
+          stack: 'sessions',
+        },
+        {
+          label: 'Caveman',
+          data: dayData.map(d => d.caveman_sessions || 0),
+          backgroundColor: COLORS.orange + '99',
+          borderColor: COLORS.orange,
+          borderWidth: 1,
+          stack: 'sessions',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: {
+            footer: (items) => {
+              const total = items.reduce((s, i) => s + i.raw, 0);
+              return `Total: ${total} session${total !== 1 ? 's' : ''}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, grid: { color: '#21262d' }, ticks: { stepSize: 1, precision: 0 } },
       },
     },
   });
@@ -662,7 +755,8 @@ async function main() {
     reRenderRolling();
   });
 
-  renderCavemanComparison(data.caveman_comparison);
+  renderCavemanComparison(data);
+  renderCavemanAdoption(data.by_day);
   renderDaily(data.by_day);
   renderByProject(data.by_project);
   renderModels(data.sessions);

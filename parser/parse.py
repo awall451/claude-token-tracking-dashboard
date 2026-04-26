@@ -37,6 +37,19 @@ _CAVEMAN_HOOK_RE = re.compile(r'CAVEMAN MODE ACTIVE', re.IGNORECASE)
 _CAVEMAN_HOOK_MODE_RE = re.compile(r'level:\s*(ultra|lite|full|wenyan\S*)|CAVEMAN MODE ACTIVE\s*\((ultra|lite|full|wenyan\S*)\)', re.IGNORECASE)
 
 
+def _detect_caveman_plugin(claude_dir: pathlib.Path) -> bool:
+    """Return True if the caveman plugin is installed/enabled."""
+    try:
+        settings_path = claude_dir / "settings.json"
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text())
+            if any("caveman" in k for k in settings.get("enabledPlugins", {})):
+                return True
+    except Exception:
+        pass
+    return (claude_dir / "plugins" / "marketplaces" / "caveman").is_dir()
+
+
 def detect_plan() -> dict:
     """Detect plan tier from ~/.claude.json GrowthBook feature flags."""
     try:
@@ -302,6 +315,7 @@ def build_output(sessions: list[SessionStats]) -> dict:
             "total_cost_tokens": total_cost,
             "cache_hit_rate": round(total_cache_read / cache_total, 4) if cache_total else 0.0,
         },
+        "has_caveman_plugin": _detect_caveman_plugin(CLAUDE_DIR),
         "caveman_comparison": caveman_comparison(sessions),
         "by_day": aggregate_by_day(sessions),
         "by_project": aggregate_by_project(sessions),

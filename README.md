@@ -9,7 +9,7 @@ Dashboard for tracking Claude Code token usage from local session data. Useful i
 - **Total usage** — sessions, turns, cost tokens, cache hit rate
 - **Rolling windows** — 1h / 5h / 24h token usage with color-coded gauges (5h = Anthropic's reset window)
 - **Burn rate** — tokens/hour with projection of when the 5h window fills
-- **Caveman vs normal** — avg tokens/turn comparison when using the [caveman plugin](https://github.com/JuliusBrussee/caveman)
+- **Caveman vs normal** — avg tokens/turn comparison for the [caveman plugin](https://github.com/JuliusBrussee/caveman). Auto-detects plugin install, breaks down by mode (lite/full/ultra/wenyan), and shows daily adoption trend. Onboarding callout if plugin not installed.
 - **By day / by project** — usage breakdown over time
 - **Model breakdown** — Sonnet vs Opus vs Haiku split
 - **Cache efficiency** — reads vs writes vs fresh input
