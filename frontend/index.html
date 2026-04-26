@@ -41,13 +41,36 @@
     <!-- Caveman comparison -->
     <section class="panel" id="caveman-panel">
       <h2>Caveman vs Normal</h2>
-      <div class="caveman-grid">
-        <div class="cav-stat" id="cav-normal"></div>
-        <div class="cav-savings" id="cav-savings"></div>
-        <div class="cav-stat" id="cav-caveman"></div>
+      <p class="chart-sub">Caveman mode compresses Claude's responses to save tokens — the core metric of this dashboard</p>
+      <div id="caveman-onboarding" hidden>
+        <div class="edu-callout">
+          <strong>Caveman mode not detected.</strong> Caveman compresses Claude's output ~75%, cutting token usage significantly.
+          Install: <code>/plugin install caveman@caveman</code> &nbsp;·&nbsp; Activate per-session: <code>/caveman</code>
+        </div>
       </div>
+      <div id="caveman-no-data" hidden>
+        <p class="chart-sub" style="margin:16px 0">Plugin installed but no caveman sessions yet. Activate with <code>/caveman</code> to start tracking savings.</p>
+      </div>
+      <div id="caveman-data">
+        <div class="caveman-grid">
+          <div class="cav-stat" id="cav-normal"></div>
+          <div class="cav-savings" id="cav-savings"></div>
+          <div class="cav-stat" id="cav-caveman"></div>
+        </div>
+        <h3 style="margin:24px 0 4px">By Mode</h3>
+        <p class="chart-sub">Average tokens processed per turn, by caveman intensity</p>
+        <div class="chart-wrap">
+          <canvas id="chart-caveman-modes"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Caveman adoption trend -->
+    <section class="panel" id="caveman-adoption-panel">
+      <h2>Caveman Adoption</h2>
+      <p class="chart-sub">Sessions per day — caveman (orange) vs normal (blue)</p>
       <div class="chart-wrap">
-        <canvas id="chart-caveman"></canvas>
+        <canvas id="chart-caveman-adoption"></canvas>
       </div>
     </section>
 
