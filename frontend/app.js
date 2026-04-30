@@ -279,7 +279,10 @@ function renderByProject(byProject) {
       plugins: { legend: { display: false } },
       scales: {
         x: { grid: { color: '#21262d' } },
-        y: { grid: { display: false } },
+        y: {
+          grid: { display: false },
+          ticks: { autoSkip: false },
+        },
       },
     },
   });
