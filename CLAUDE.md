@@ -72,22 +72,41 @@ When adding a new UI element, ask: *would a first-time user understand this with
 
 ## Remotes & Mirroring
 
-Two remotes must always stay in sync — treat them as mirrors:
+GitHub is the source of truth. CI and PR review live there. Gitea is a read-only mirror that auto-pulls from GitHub.
 
-| Remote | URL |
-|--------|-----|
-| `origin` | https://github.com/awall451/claude-token-tracking-dashboard |
-| `gitea` | git@git.projectorion.net:dillon/claude-token-tracking |
+| Remote | URL | Role |
+|--------|-----|------|
+| `origin` | https://github.com/awall451/claude-token-tracking-dashboard | Source of truth — open PRs here |
+| `gitea` | git@git.projectorion.net:dillon/claude-token-tracking | Pull-mirror of `origin/main` (configured in Gitea repo settings → Mirror Settings) |
 
-**Push rule:** always push to both in every session:
+**Push rule:** push feature branches only to `origin`. Open the PR there. After merge, the Gitea pull mirror catches up on its next interval. Do *not* dual-push or open Gitea PRs for new work — the mirror handles it.
+
 ```bash
-git push gitea <branch> && git push origin <branch>
+git push -u origin <branch>
+gh pr create --repo awall451/claude-token-tracking-dashboard --base main --head <branch>
 ```
 
-**PR rule:** create a PR in both repos for every feature branch:
-- GitHub: `gh pr create --repo awall451/claude-token-tracking-dashboard --base main --head <branch>`
-- Gitea: `curl -X POST https://git.projectorion.net/api/v1/repos/dillon/claude-token-tracking/pulls -H "Authorization: token $GITEA_TOKEN" ...`
-  - Requires `GITEA_TOKEN` env var (Gitea personal access token). If unset, provide the PR URL from `git push` output to the user and ask them to open it manually.
+If the Gitea mirror falls behind unexpectedly, force a one-shot sync from the Gitea UI (repo settings → Mirror Settings → Synchronize Now) rather than pushing manually.
+
+**Note on Gitea Actions:** Gitea ≥ v1.19 supports GitHub-Actions-compatible workflows via `act_runner`. The `.github/workflows/` files would run there too if needed. For now CI runs only on GitHub.
+
+## Continuous Integration & TDD
+
+CI is configured at `.github/workflows/ci.yml`. It runs `pytest` on every push to `main` and every pull request. Tests live in `tests/` and import from `parser/`. Pure-function modules (`parser/models.py`) are the highest-value test targets and have full coverage of aggregation helpers.
+
+**Local test loop:**
+```bash
+python3 -m venv .venv && .venv/bin/pip install -q pytest   # one-time
+.venv/bin/pytest                                           # run tests
+```
+
+**TDD workflow for new changes:**
+1. Open a GitHub Issue describing the bug or feature with reproduction / acceptance criteria.
+2. Branch from `main` (`<type>/<slug>`, e.g. `fix/<short-name>`).
+3. **Red:** add a failing test first, commit. CI fails.
+4. **Green:** make the smallest change that turns the test green, commit.
+5. **Refactor:** clean up while CI stays green.
+6. Open a PR referencing the issue (`Fixes #N`). Merge once CI is green.
 
 ## Permissions & Workflow
 
@@ -96,7 +115,7 @@ For any task in this project:
 2. After edits, deploy to local Docker: `docker compose build --no-cache --pull=false && docker compose up -d`
 3. Validate via `curl http://localhost:9420/api/status` and spot-check `stats.json`
 4. If broken, diagnose and fix, repeat until working
-5. Push to both remotes and create PRs in both (see Remotes & Mirroring above)
+5. Push the branch to `origin` and open a GitHub PR (see Remotes & Mirroring above). Do not dual-push.
 6. After completion, suggest further improvements if any
 
 ## TODO
@@ -106,6 +125,6 @@ For any task in this project:
 ## Key Invariants
 
 - `stats.json` is gitignored — always generated locally, never committed.
-- No external dependencies: Python 3.10+ stdlib only. Chart.js loaded from CDN.
+- Runtime code (`parser/`, `server/`) uses Python 3.10+ stdlib only. Chart.js loaded from CDN. `pytest` is a dev-only dependency for tests; never imported by runtime code.
 - `server/serve.py` writes stats to `/data/stats.json` by default (Docker volume path); override with `STATS_PATH` env var for local use.
 - The `CLAUDE_DIR` env var overrides the `~/.claude` path in both `parse.py` and `serve.py`.
