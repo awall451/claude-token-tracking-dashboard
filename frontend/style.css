@@ -437,6 +437,49 @@ main {
 
 .edu-callout strong { color: var(--green); }
 
+.edu-callout code {
+  background: #0d1f0d;
+  border: 1px solid #3fb95044;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: #b0d8b0;
+}
+
+/* Lifetime stat grid (reused-friendly compact tile grid) */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--gap);
+}
+
+.stat-cell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.stat-cell .label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.stat-cell .value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stat-cell .sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
 .modal-charts {
   display: grid;
   grid-template-columns: 1fr 1fr;

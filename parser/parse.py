@@ -15,7 +15,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows
+from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
 
 CLAUDE_DIR = pathlib.Path(os.environ.get("CLAUDE_DIR", str(pathlib.Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
@@ -301,6 +301,8 @@ def build_output(sessions: list[SessionStats]) -> dict:
         plan_info["suggested_limit"] = PLAN_LIMITS["standard"]
         plan_info["limits"] = PLAN_LIMITS
 
+    by_day = aggregate_by_day(sessions)
+
     return {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "plan_info": plan_info,
@@ -315,9 +317,10 @@ def build_output(sessions: list[SessionStats]) -> dict:
             "total_cost_tokens": total_cost,
             "cache_hit_rate": round(total_cache_read / cache_total, 4) if cache_total else 0.0,
         },
+        "lifetime": lifetime_stats(sessions, by_day),
         "has_caveman_plugin": _detect_caveman_plugin(CLAUDE_DIR),
         "caveman_comparison": caveman_comparison(sessions),
-        "by_day": aggregate_by_day(sessions),
+        "by_day": by_day,
         "by_project": aggregate_by_project(sessions),
         "sessions": [s.to_dict() for s in sorted(sessions, key=lambda x: x.start_ts)],
     }

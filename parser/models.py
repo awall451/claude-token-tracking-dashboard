@@ -172,6 +172,70 @@ def caveman_comparison(sessions: list[SessionStats]) -> dict:
     }
 
 
+def lifetime_stats(sessions: list[SessionStats], by_day: dict) -> dict:
+    """Aggregate everything-ever stats: totals, daily/weekly/monthly averages, peak day, rolling 7d series.
+
+    `by_day` is the output of `aggregate_by_day` — passed in to avoid recomputing.
+    Cost-tokens basis (input + cache_creation + output) — cache reads excluded; reads are cheaper and
+    already separately tracked in `totals`.
+    """
+    total_input = sum(s.input_tokens for s in sessions)
+    total_cc = sum(s.cache_creation_tokens for s in sessions)
+    total_cr = sum(s.cache_read_tokens for s in sessions)
+    total_output = sum(s.output_tokens for s in sessions)
+    total_cost = sum(s.total_cost_tokens for s in sessions)
+    total_turns = sum(s.turns for s in sessions)
+    total_sessions = len(sessions)
+
+    start_tss = [s.start_ts for s in sessions if s.start_ts]
+    first_session_at_ms = min(start_tss) if start_tss else 0
+    last_session_at_ms = max(start_tss) if start_tss else 0
+
+    days_tracked = len(by_day)
+    daily_avg = total_cost / days_tracked if days_tracked else 0.0
+
+    peak_day = {"date": None, "cost_tokens": 0}
+    for date, d in by_day.items():
+        if d["total_cost_tokens"] > peak_day["cost_tokens"]:
+            peak_day = {"date": date, "cost_tokens": d["total_cost_tokens"]}
+
+    # rolling 7-day trailing average across all days, ordered chronologically
+    day_items = list(by_day.items())  # by_day is already sorted by date
+    rolling_7d = []
+    window_sum = 0
+    window: list[int] = []
+    for date, d in day_items:
+        window.append(d["total_cost_tokens"])
+        window_sum += d["total_cost_tokens"]
+        if len(window) > 7:
+            window_sum -= window.pop(0)
+        rolling_7d.append({"date": date, "avg_cost_tokens": round(window_sum / len(window), 1)})
+
+    last_30 = day_items[-30:] if day_items else []
+    last_30d_total = sum(d["total_cost_tokens"] for _, d in last_30)
+    last_30d_daily_avg = last_30d_total / len(last_30) if last_30 else 0.0
+
+    return {
+        "total_cost_tokens": total_cost,
+        "total_input_tokens": total_input,
+        "total_cache_creation_tokens": total_cc,
+        "total_cache_read_tokens": total_cr,
+        "total_output_tokens": total_output,
+        "total_turns": total_turns,
+        "total_sessions": total_sessions,
+        "first_session_at_ms": first_session_at_ms,
+        "last_session_at_ms": last_session_at_ms,
+        "days_tracked": days_tracked,
+        "daily_average_cost_tokens": round(daily_avg, 1),
+        "weekly_average_cost_tokens": round(daily_avg * 7, 1),
+        "monthly_average_cost_tokens": round(daily_avg * 30, 1),
+        "peak_day": peak_day,
+        "last_30d_total_cost_tokens": last_30d_total,
+        "last_30d_daily_average": round(last_30d_daily_avg, 1),
+        "rolling_7d_average": rolling_7d,
+    }
+
+
 def rolling_windows(turns: list[dict]) -> dict:
     """Compute token usage across rolling time windows relative to now."""
     now_ms = int(time.time() * 1000)

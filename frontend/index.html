@@ -77,9 +77,18 @@
     <!-- Tokens by day -->
     <section class="panel">
       <h2>Tokens by Day</h2>
+      <p class="chart-sub">Daily totals (stacked) with 7-day rolling average overlay (orange line)</p>
       <div class="chart-wrap tall">
         <canvas id="chart-daily"></canvas>
       </div>
+    </section>
+
+    <!-- Lifetime totals & averages -->
+    <section class="panel" id="lifetime-panel">
+      <h2>Lifetime Totals &amp; Averages</h2>
+      <p class="chart-sub">Everything Claude Code has logged on this machine, since first session</p>
+      <div class="edu-callout" id="lifetime-callout"></div>
+      <div class="stat-grid" id="lifetime-grid"></div>
     </section>
 
     <!-- By project -->
