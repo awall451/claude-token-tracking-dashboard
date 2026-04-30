@@ -29,7 +29,12 @@ function shortProject(path) {
   return parts[parts.length - 1] || parts[parts.length - 2] || path;
 }
 
-function renderCards(totals) {
+function renderCards(totals, lifetime) {
+  const lt = lifetime || {};
+  const peakDate = lt.peak_day && lt.peak_day.date ? lt.peak_day.date : '—';
+  const dailyAvgTooltip = lt.days_tracked
+    ? `${fmt(lt.total_cost_tokens || 0)} ÷ ${lt.days_tracked} days tracked`
+    : 'no data';
   const cards = [
     { label: 'Sessions',     value: totals.sessions,                        sub: null },
     { label: 'Turns',        value: fmt(totals.turns),                      sub: null },
@@ -37,12 +42,55 @@ function renderCards(totals) {
     { label: 'Cache Hit',    value: (totals.cache_hit_rate * 100).toFixed(1) + '%', sub: 'reads / (reads + writes)' },
     { label: 'Output Tokens',value: fmt(totals.output_tokens),               sub: null },
     { label: 'Cache Reads',  value: fmt(totals.cache_read_tokens),           sub: null },
+    { label: 'Daily Average',value: fmt(lt.daily_average_cost_tokens || 0),  sub: `${lt.days_tracked || 0} days tracked`, title: dailyAvgTooltip },
+    { label: 'Weekly Average',value: fmt(lt.weekly_average_cost_tokens || 0), sub: 'daily avg × 7' },
+    { label: 'Peak Day',     value: fmt((lt.peak_day && lt.peak_day.cost_tokens) || 0), sub: peakDate, title: `Highest single-day total: ${peakDate}` },
   ];
   document.getElementById('cards').innerHTML = cards.map(c => `
-    <div class="card">
+    <div class="card"${c.title ? ` title="${c.title}"` : ''}>
       <div class="label">${c.label}</div>
       <div class="value">${c.value}</div>
       ${c.sub ? `<div class="sub">${c.sub}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderLifetime(lt) {
+  if (!lt) return;
+  const calloutEl = document.getElementById('lifetime-callout');
+  const gridEl = document.getElementById('lifetime-grid');
+  if (!calloutEl || !gridEl) return;
+
+  const firstDate = lt.first_session_at_ms ? fmtDate(lt.first_session_at_ms) : '—';
+  const lastDate = lt.last_session_at_ms ? fmtDate(lt.last_session_at_ms) : '—';
+  const peakDate = (lt.peak_day && lt.peak_day.date) || '—';
+
+  calloutEl.innerHTML = `
+    <strong>Heads-up:</strong> these numbers sum every session JSONL stored under
+    <code>~/.claude/projects/</code> on this machine — not Anthropic's authoritative quota.
+    Claude Code does not expose account-level totals locally; the official source of truth lives at
+    <code>claude.ai</code> (Max plan dashboard).
+    Tracking ${lt.days_tracked || 0} day${lt.days_tracked === 1 ? '' : 's'} of activity from
+    <strong>${firstDate}</strong> to <strong>${lastDate}</strong>.
+  `;
+
+  const stats = [
+    { label: 'Lifetime cost tokens', value: fmt(lt.total_cost_tokens || 0), sub: 'input + cache writes + output' },
+    { label: 'Lifetime turns',       value: fmt(lt.total_turns || 0),       sub: `across ${lt.total_sessions || 0} sessions` },
+    { label: 'Daily average',        value: fmt(lt.daily_average_cost_tokens || 0), sub: 'lifetime ÷ days tracked' },
+    { label: 'Weekly average',       value: fmt(lt.weekly_average_cost_tokens || 0), sub: 'daily × 7' },
+    { label: 'Monthly average',      value: fmt(lt.monthly_average_cost_tokens || 0), sub: 'daily × 30' },
+    { label: 'Last 30d total',       value: fmt(lt.last_30d_total_cost_tokens || 0), sub: 'most recent 30 days of data' },
+    { label: 'Last 30d daily avg',   value: fmt(lt.last_30d_daily_average || 0), sub: null },
+    { label: 'Peak day',             value: fmt((lt.peak_day && lt.peak_day.cost_tokens) || 0), sub: peakDate },
+    { label: 'First session',        value: firstDate, sub: null },
+  ];
+
+  gridEl.innerHTML = stats.map(s => `
+    <div class="stat-cell">
+      <div class="label">${s.label}</div>
+      <div class="value">${s.value}</div>
+      ${s.sub ? `<div class="sub">${s.sub}</div>` : ''}
     </div>
   `).join('');
 }
@@ -190,9 +238,14 @@ function renderCavemanAdoption(byDay) {
   });
 }
 
-function renderDaily(byDay) {
+function renderDaily(byDay, rolling7d) {
   const days = Object.keys(byDay).slice(-60); // last 60 days
   const data = days.map(d => byDay[d]);
+
+  // Build rolling-7d map keyed by date for fast lookup, then align to displayed days
+  const rolling7Map = {};
+  for (const r of (rolling7d || [])) rolling7Map[r.date] = r.avg_cost_tokens;
+  const rollingValues = days.map(d => rolling7Map[d] ?? null);
 
   new Chart(document.getElementById('chart-daily'), {
     type: 'bar',
@@ -222,6 +275,20 @@ function renderDaily(byDay) {
           borderColor: COLORS.orange,
           borderWidth: 1,
           stack: 'tokens',
+        },
+        {
+          label: '7-day avg',
+          type: 'line',
+          data: rollingValues,
+          borderColor: COLORS.orange,
+          backgroundColor: COLORS.orange,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.25,
+          fill: false,
+          spanGaps: true,
+          stack: undefined,
         },
       ],
     },
@@ -743,7 +810,8 @@ async function main() {
     renderRolling(data.rolling, getSoftLimit());
   }
 
-  renderCards(data.totals);
+  renderCards(data.totals, data.lifetime);
+  renderLifetime(data.lifetime);
   renderRolling(data.rolling, getSoftLimit());
 
   planSelect.addEventListener('change', () => {
@@ -757,7 +825,7 @@ async function main() {
 
   renderCavemanComparison(data);
   renderCavemanAdoption(data.by_day);
-  renderDaily(data.by_day);
+  renderDaily(data.by_day, data.lifetime && data.lifetime.rolling_7d_average);
   renderByProject(data.by_project);
   renderModels(data.sessions);
   renderCache(data.totals);
