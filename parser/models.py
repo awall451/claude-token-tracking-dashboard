@@ -70,6 +70,11 @@ class SessionStats:
         return round(self.total_cost_tokens / self.turns, 1) if self.turns > 0 else 0.0
 
     @property
+    def estimated(self) -> bool:
+        """True when every turn is a backfill estimate (no exact usage for this session)."""
+        return bool(self.turns_raw) and all(t.get("estimated") for t in self.turns_raw)
+
+    @property
     def wh(self) -> list:
         acc = [0.0, 0.0, 0.0]
         for t in self.turns_raw:
@@ -107,6 +112,7 @@ class SessionStats:
                           for t in self.turns_raw],
             "projects": self.projects_breakdown(),
             "wh": self.wh,
+            "estimated": self.estimated,
             "cache_creation_5m_tokens": self.cache_creation_5m_tokens,
             "cache_creation_1h_tokens": self.cache_creation_1h_tokens,
             "thinking_tokens": self.thinking_tokens,
@@ -160,6 +166,7 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
         "sessions": 0,
         "caveman_sessions": 0,
         "normal_sessions": 0,
+        "estimated_cost_tokens": 0,
         "wh": [0.0, 0.0, 0.0],
     })
     for s in sessions:
@@ -189,6 +196,8 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
             td["output_tokens"] += t["output"]
             td["total_cost_tokens"] += t["cost"]
             td["turns"] += 1
+            if t.get("estimated"):
+                td["estimated_cost_tokens"] += t["cost"]
             _add_wh(td["wh"], t)
     return dict(sorted(by_day.items()))
 
@@ -277,8 +286,8 @@ def caveman_comparison(sessions: list[SessionStats]) -> dict:
     by_mode: dict = defaultdict(list)
 
     for s in sessions:
-        if s.turns == 0:
-            continue
+        if s.turns == 0 or s.estimated:
+            continue  # estimates carry no caveman signal
         if s.caveman:
             groups["caveman"].append(s)
             mode_key = "wenyan" if (s.caveman_mode or "full").startswith("wenyan") else (s.caveman_mode or "full")

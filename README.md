@@ -73,6 +73,13 @@ To stop losing transcripts in the first place, raise the retention in `~/.claude
 
 Extra transcript roots (e.g. an archived copy of `~/.claude/projects`) can be ingested with `ARCHIVE_DIRS` (Docker mounts `~/.local/share/claude-token-tracker/transcript-archive/projects`) or `parse.py --archive DIR --ledger ledger.sqlite`. Sessions present in several roots are read once.
 
+### Backfilling older history
+
+Each refresh also backfills what predates the ledger:
+
+- **Exact:** the most recent session of every project from `~/.claude.json` (`lastModelUsage`, `lastCost`, lines changed), and old tracker `stats.json` snapshots (`python3 parser/backfill.py --ledger … --snapshot old-stats.json`).
+- **Estimated:** sessions known only from `~/.claude/history.jsonl` (every prompt you typed, back to your first session) get one turn per prompt, sized by the median tokens-per-prompt of exact sessions in the same project (else all projects). Estimates are flagged everywhere, excluded from caveman stats, recomputed each run as exact data grows, and only made for sessions that ended before exact transcript coverage begins.
+
 ## Project attribution
 
 By default every turn counts toward the directory Claude Code was launched in. To split usage when you work across several repos from one directory (a "hub"), create `~/.config/claude-token-tracker/tags.toml` — start from [`tags.example.toml`](tags.example.toml):

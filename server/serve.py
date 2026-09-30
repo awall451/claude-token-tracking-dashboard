@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 # Ensure parser/ is importable
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "parser"))
+import backfill as backfill_mod
 import ledger as ledger_mod
 import parse as parser_mod
 
@@ -48,6 +49,8 @@ def refresh_stats() -> bool:
             _ledger = ledger_mod.connect(ledger_mod.LEDGER_PATH)
         roots = [parser_mod.PROJECTS_DIR, *ARCHIVE_DIRS]
         ledger_mod.ingest(_ledger, parser_mod.parse_all(projects_dir=roots, cache=_parse_cache))
+        # Pre-ledger history: exact last-session usage from ~/.claude.json + labeled estimates
+        backfill_mod.run(_ledger, parser_mod.HISTORY_FILE, parser_mod.CLAUDE_JSON)
         sessions = ledger_mod.load_sessions(_ledger)   # durable history, not just what's on disk
         output = parser_mod.build_output(sessions)
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
