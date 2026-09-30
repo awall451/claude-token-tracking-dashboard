@@ -92,8 +92,14 @@
     </section>
 
     <!-- By project -->
-    <section class="panel">
-      <h2>By Project</h2>
+    <section class="panel" id="project-panel">
+      <h2>By Project
+        <span class="limit-hint">group by:
+          <select id="project-groupby" title="How turns are grouped. Project/tag attribution comes from ~/.config/claude-token-tracker/tags.toml"></select>
+        </span>
+      </h2>
+      <p class="chart-sub" id="project-sub">Cost tokens per project, attributed per turn from the files each tool call touched</p>
+      <div class="edu-callout" id="project-callout" hidden></div>
       <div class="chart-wrap">
         <canvas id="chart-project"></canvas>
       </div>

@@ -197,3 +197,20 @@ def test_build_output_totals_include_reported_cost(tmp_path):
     out = parse.build_output(sessions)
     assert out["totals"]["reported_cost_usd"] == 3.0
     assert out["totals"]["reported_sessions"] == 1
+
+
+def test_anonymize_covers_attributed_projects_and_tags():
+    out = {
+        "by_project": {"client-secret-app": {}},
+        "by_launch_dir": {"/home/u/hub": {}},
+        "by_tag": {"client": {"Secret Corp": {"turns": 1}}},
+        "sessions": [{
+            "project_path": "/home/u/hub", "session_name": "x",
+            "projects": {"client-secret-app": 5},
+            "turns_raw": [{"project": "client-secret-app", "tags": {"client": "Secret Corp"}}],
+        }],
+    }
+    anon = parse.anonymize_output(out)
+    blob = json.dumps(anon)
+    assert "secret" not in blob.lower()
+    assert anon["by_tag"] == {"client": {"client-1": {"turns": 1}}}

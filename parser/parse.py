@@ -13,12 +13,32 @@ import pathlib
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 try:
-    from .models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
+    from .attribution import attribute_sessions, extract_paths, load_config
+    from .models import (
+        SessionStats,
+        aggregate_by_day,
+        aggregate_by_project,
+        aggregate_by_tag,
+        aggregate_by_turn_project,
+        caveman_comparison,
+        lifetime_stats,
+        rolling_windows,
+    )
 except ImportError:  # run as a script / imported via sys.path (server/serve.py)
-    from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
+    from attribution import attribute_sessions, extract_paths, load_config
+    from models import (
+        SessionStats,
+        aggregate_by_day,
+        aggregate_by_project,
+        aggregate_by_tag,
+        aggregate_by_turn_project,
+        caveman_comparison,
+        lifetime_stats,
+        rolling_windows,
+    )
 
 CLAUDE_DIR = pathlib.Path(os.environ.get("CLAUDE_DIR", str(pathlib.Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
@@ -37,6 +57,7 @@ _CAVEMAN_RE = re.compile(r'<command-name>/caveman|caveman:caveman', re.IGNORECAS
 _CAVEMAN_MODE_RE = re.compile(r'<command-args>(ultra|lite|full|wenyan[^\s<]*)', re.IGNORECASE)
 # Hook-based activation: "CAVEMAN MODE ACTIVE — level: ultra" or "CAVEMAN MODE ACTIVE (ultra)"
 _CAVEMAN_HOOK_RE = re.compile(r'CAVEMAN MODE ACTIVE', re.IGNORECASE)
+_TAG_RE = re.compile(r'<command-name>/tag</command-name>\s*<command-args>\s*([^<\s]+)')
 _CAVEMAN_HOOK_MODE_RE = re.compile(r'level:\s*(ultra|lite|full|wenyan\S*)|CAVEMAN MODE ACTIVE\s*\((ultra|lite|full|wenyan\S*)\)', re.IGNORECASE)
 
 
@@ -132,7 +153,7 @@ def _to_ms(ts) -> int:
             return int(ts)
         except ValueError:
             try:
-                return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+                return int(datetime.fromisoformat(ts).timestamp() * 1000)
             except ValueError:
                 return 0
     return 0
@@ -151,9 +172,12 @@ def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
     stats = SessionStats(session_id=jsonl_path.stem, project_path="")
     caveman_detected = False
     caveman_mode = ""
-    # requestId → (ts, message). Streaming writes several entries per request; subagent
-    # transcripts log partial usage on early chunks, so keep the entry with the most output.
-    requests: dict[str, tuple[int, dict]] = {}
+    # requestId → {ts, msg, paths, exchange, tag, cwd}. Streaming writes several entries per
+    # request (one per content block); subagent transcripts log partial usage on early chunks,
+    # so keep the usage with the most output and collect tool paths across all entries.
+    requests: dict[str, dict] = {}
+    exchange = -1        # index of the user prompt the following turns answer
+    pending_tag = None   # /tag seen in the current exchange
 
     for line in lines:
         line = line.strip()
@@ -187,7 +211,16 @@ def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
                 stats.custom_title = obj["customTitle"]
 
         elif entry_type == "user":
-            text = _text_content(obj.get("message", {}))
+            message = obj.get("message", {})
+            content = message.get("content")
+            is_tool_result = isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+            if not is_tool_result and not obj.get("isMeta"):
+                exchange += 1
+            text = _text_content(message)
+            m = _TAG_RE.search(text)
+            if m:
+                pending_tag = (exchange, m.group(1))
             if _CAVEMAN_RE.search(text):
                 caveman_detected = True
                 m = _CAVEMAN_MODE_RE.search(text)
@@ -216,12 +249,23 @@ def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
             msg = obj.get("message", {})
             if not msg.get("usage"):
                 continue
+            if obj.get("attributionSkill") and not stats.attribution_skill:
+                stats.attribution_skill = obj["attributionSkill"]
             key = obj.get("requestId") or obj.get("uuid") or f"line{len(requests)}"
-            prev = requests.get(key)
-            if prev is None or msg["usage"].get("output_tokens", 0) >= prev[1]["usage"].get("output_tokens", 0):
-                requests[key] = (prev[0] if prev else ts, msg)
+            content = msg.get("content") if isinstance(msg.get("content"), list) else []
+            paths = extract_paths(content, cwd=obj.get("cwd", ""))
+            req = requests.get(key)
+            if req is None:
+                tag = pending_tag[1] if pending_tag and pending_tag[0] == exchange else None
+                requests[key] = {"ts": ts, "msg": msg, "paths": paths, "exchange": max(exchange, 0),
+                                 "tag": tag, "cwd": obj.get("cwd", "")}
+            else:
+                req["paths"].extend(paths)
+                if msg["usage"].get("output_tokens", 0) >= req["msg"]["usage"].get("output_tokens", 0):
+                    req["msg"] = msg
 
-    for ts, msg in sorted(requests.values(), key=lambda r: r[0]):
+    for req in sorted(requests.values(), key=lambda r: r["ts"]):
+        ts, msg = req["ts"], req["msg"]
         usage = msg["usage"]
         inp = usage.get("input_tokens", 0)
         cc = usage.get("cache_creation_input_tokens", 0)
@@ -251,6 +295,11 @@ def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
             "cache_read": cr,
             "output": out,
             "cost": inp + cc + out,
+            # attribution inputs; stripped from to_dict()
+            "exchange": req["exchange"],
+            "paths": req["paths"],
+            "tag": req["tag"],
+            "cwd": req["cwd"],
         })
 
     if stats.turns == 0 and not stats.cost_states:
@@ -359,7 +408,8 @@ def parse_all(projects_dir: pathlib.Path | None = None,
     return sessions
 
 
-def build_output(sessions: list[SessionStats]) -> dict:
+def build_output(sessions: list[SessionStats], tags_config=None) -> dict:
+    attribute_sessions(sessions, tags_config if tags_config is not None else load_config())
     total_input = sum(s.input_tokens for s in sessions)
     total_cache_creation = sum(s.cache_creation_tokens for s in sessions)
     total_cache_read = sum(s.cache_read_tokens for s in sessions)
@@ -383,7 +433,7 @@ def build_output(sessions: list[SessionStats]) -> dict:
     by_day = aggregate_by_day(sessions)
 
     return {
-        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "generated_at": datetime.now(tz=UTC).isoformat(),
         "plan_info": plan_info,
         "rolling": rolling_windows(all_turns),
         "totals": {
@@ -404,23 +454,40 @@ def build_output(sessions: list[SessionStats]) -> dict:
         "has_caveman_plugin": _detect_caveman_plugin(CLAUDE_DIR),
         "caveman_comparison": caveman_comparison(sessions),
         "by_day": by_day,
-        "by_project": aggregate_by_project(sessions),
+        # Per-turn attribution (hubs/projects/tags from tags.toml); by_launch_dir = old per-session view
+        "by_project": aggregate_by_turn_project(sessions),
+        "by_launch_dir": aggregate_by_project(sessions),
+        "by_tag": aggregate_by_tag(sessions),
         "sessions": [s.to_dict() for s in sorted(sessions, key=lambda x: x.start_ts)],
     }
 
 
 def anonymize_output(output: dict) -> dict:
-    """Replace real project paths with generic labels (project-1, project-2, ...)."""
+    """Replace project paths/names, tag values and session names with generic labels."""
     import copy
     out = copy.deepcopy(output)
-    # Build stable mapping from real path → label (sorted for reproducibility)
-    paths = sorted(out["by_project"].keys())
-    mapping = {p: f"project-{i+1}" for i, p in enumerate(paths)}
+    # Stable mapping (sorted for reproducibility) over every project identifier that appears
+    names = set(out.get("by_project", {})) | set(out.get("by_launch_dir", {}))
+    for s in out["sessions"]:
+        names.add(s["project_path"])
+        names.update(s.get("projects", {}))
+    mapping = {p: f"project-{i+1}" for i, p in enumerate(sorted(names))}
 
-    out["by_project"] = {mapping.get(k, k): v for k, v in out["by_project"].items()}
+    for key in ("by_project", "by_launch_dir"):
+        if key in out:
+            out[key] = {mapping.get(k, k): v for k, v in out[key].items()}
+    out["by_tag"] = {
+        tag_key: {f"{tag_key}-{i+1}": v for i, (_, v) in enumerate(sorted(values.items()))}
+        for tag_key, values in out.get("by_tag", {}).items()
+    }
     for s in out["sessions"]:
         s["project_path"] = mapping.get(s["project_path"], s["project_path"])
         s["session_name"] = ""  # usually the first prompt text — never safe to share
+        s["projects"] = {mapping.get(k, k): v for k, v in s.get("projects", {}).items()}
+        for t in s.get("turns_raw", []):
+            if "project" in t:
+                t["project"] = mapping.get(t["project"], t["project"])
+            t.pop("tags", None)
     return out
 
 

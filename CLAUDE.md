@@ -34,6 +34,8 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 
 **`parser/parse.py`** — entry point. Walks all project dirs, calls `parse_session_file()` per JSONL, deduplicates streaming chunks by `requestId`, then calls `build_output()` to produce the final JSON blob.
 
+**`parser/attribution.py`** — per-turn project attribution. Loads `tags.toml` (`TAGS_CONFIG`, default `~/.config/claude-token-tracker/tags.toml`; `HOME_DIR` expands `~`). `extract_paths()` pulls paths from `tool_use` inputs; `resolve()` maps a path to (project, tags) via explicit projects (longest prefix) then hubs (first segment); `attribute_turns()` smooths per exchange (user prompt) with `/tag` override and inheritance; `attribute_sessions()` runs it for all sessions, subagents inheriting the parent's project at spawn. Pure string matching — no filesystem access.
+
 **`parser/models.py`** — pure data logic with no I/O. `SessionStats` dataclass holds per-session aggregates. Module-level functions (`aggregate_by_day`, `aggregate_by_project`, `caveman_comparison`, `rolling_windows`) transform lists of `SessionStats` into the nested dicts that `stats.json` emits. The 5h rolling window in `rolling_windows()` is the key metric since Anthropic uses a 5-hour reset window for rate limiting.
 
 **`server/serve.py`** — single-file HTTP server. Imports `parser/parse.py` directly (via `sys.path` insertion) and runs `refresh_stats()` on a background thread every `REFRESH_INTERVAL` seconds. Serves `frontend/` as static files and `stats.json` from `STATS_PATH`. Two API endpoints: `POST /api/refresh` (force re-parse) and `GET /api/status`.
@@ -62,6 +64,8 @@ Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheap
 **Per-mode breakdown:** `caveman_comparison()` emits `by_mode` dict keyed by mode name (`normal`, `lite`, `full`, `ultra`, `wenyan` — wenyan-* variants normalized to `wenyan`). Frontend renders as bar chart in the caveman panel.
 
 **Timestamps:** Unix milliseconds.
+
+**Turn records (`turns_raw`):** internal keys `paths`, `cwd`, `exchange`, `tag` feed attribution and are stripped in `to_dict()`; emitted turns carry `project` + `tags`. `stats.json` has `by_project` (attributed per turn), `by_launch_dir` (old per-session view), `by_tag` (`{key: {value: totals}}`).
 
 ## UI Design Philosophy
 
@@ -129,6 +133,6 @@ For any task in this project:
 ## Key Invariants
 
 - `stats.json` is gitignored — always generated locally, never committed.
-- Runtime code (`parser/`, `server/`) uses Python 3.10+ stdlib only. Chart.js loaded from CDN. `pytest` is a dev-only dependency for tests; never imported by runtime code.
+- Runtime code (`parser/`, `server/`) uses Python 3.11+ stdlib only (`tomllib`). Chart.js loaded from CDN. `pytest` is a dev-only dependency for tests; never imported by runtime code.
 - `server/serve.py` writes stats to `/data/stats.json` by default (Docker volume path); override with `STATS_PATH` env var for local use.
 - The `CLAUDE_DIR` env var overrides the `~/.claude` path in both `parse.py` and `serve.py`.
