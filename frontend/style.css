@@ -45,7 +45,8 @@ header h1 {
 main {
   padding: 24px 32px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, …) so wide tables/canvases can't stretch a column past the viewport */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--gap);
 }
 
@@ -89,6 +90,7 @@ main {
   border-radius: var(--radius);
   padding: 20px;
   grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .panel.half {
@@ -96,6 +98,10 @@ main {
 }
 
 .panel h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 16px;
@@ -401,6 +407,13 @@ main {
   color: var(--text);
 }
 
+/* Wide tables scroll sideways inside their panel instead of widening the page */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
 .modal-session-name {
   font-size: 12px;
   color: var(--muted);
@@ -408,7 +421,7 @@ main {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 600px;
+  max-width: min(600px, 100%);
 }
 
 .modal-meta {
@@ -502,9 +515,27 @@ main {
 }
 
 @media (max-width: 768px) {
-  main { grid-template-columns: 1fr; padding: 16px; }
+  header { padding: 16px; flex-wrap: wrap; gap: 4px 12px; }
+  main { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .panel { padding: 16px; }
+  .limit-hint { margin-left: 0; flex-basis: 100%; }
+  .rolling-grid { grid-template-columns: 1fr; }
+  .modal-overlay { padding: 8px; }
+  .modal-box { max-height: 95vh; }
   .panel.half { grid-column: 1 / -1; }
   .caveman-grid { grid-template-columns: 1fr; }
   .modal-charts { grid-template-columns: 1fr; }
   .modal-box { padding: 20px; }
+}
+
+/* Touch devices (phones in either orientation): thumb-sized controls, 16px text so
+   iOS doesn't zoom on focus. The e2e audit enforces >= 40px tap targets. */
+@media (pointer: coarse) {
+  .limit-hint { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .limit-hint input,
+  .limit-hint select { min-height: 40px; font-size: 16px; padding: 6px 10px; }
+  .limit-hint select { padding-right: 26px; }
+  .limit-hint input { width: 130px; }
+  .sessions-show-more { min-height: 44px; }
+  .modal-close { min-width: 44px; min-height: 44px; top: 8px; right: 8px; font-size: 20px; }
 }

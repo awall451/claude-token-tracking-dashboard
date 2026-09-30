@@ -112,6 +112,14 @@ python3 -m venv .venv && .venv/bin/pip install -q pytest   # one-time
 .venv/bin/pytest                                           # run tests
 ```
 
+**Tier 3 — Playwright phone-viewport audit** (`e2e/`, same pattern as gantry): loads the dashboard at iPhone 14 / Pixel 7 (portrait + landscape) and 1280px desktop against a running server; asserts no horizontal page overflow (wide tables must sit in a `.scroll-x` wrapper), ≥40px tap targets on touch devices, and that the session modal fits. Screenshots → `e2e/shots/<project>/` (gitignored). Node is dev-only here; runtime stays Python stdlib.
+```bash
+cd e2e && npm install                 # one-time
+npm run e2e                           # BASE_URL defaults to http://localhost:9420
+npm run e2e:mobile                    # portrait phones only
+```
+Any UI change must keep `npm run e2e` green.
+
 **TDD workflow for new changes:**
 1. Open a GitHub Issue describing the bug or feature with reproduction / acceptance criteria.
 2. Branch from `main` (`<type>/<slug>`, e.g. `fix/<short-name>`).

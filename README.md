@@ -108,6 +108,14 @@ Dashboard has a configurable soft limit input (default: auto-calibrated from his
 
 Without the statusline wrapper, the dashboard can't see your real quota. If you hit a real rate limit, note the 5h token count shown at that moment and set it as your limit — or set up [Real quota](#real-quota-promax).
 
+## Mobile / layout tests
+
+`e2e/` holds a Playwright phone-viewport audit (iPhone + Pixel, portrait + landscape, desktop): no horizontal scroll, ≥40px tap targets, modal fits. Run it against a running dashboard:
+
+```bash
+cd e2e && npm install && npm run e2e      # BASE_URL=http://localhost:9420 by default
+```
+
 ## Requirements
 
 Python 3.11+ (stdlib `tomllib`), no dependencies. Docker for containerized deployment. Chart.js loaded from CDN.

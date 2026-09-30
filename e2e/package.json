@@ -1,0 +1,12 @@
+{
+  "name": "claude-token-tracker-e2e",
+  "private": true,
+  "description": "Tier 3: Playwright phone-viewport audit (dev-only; runtime stays Python stdlib)",
+  "scripts": {
+    "e2e": "playwright test",
+    "e2e:mobile": "playwright test --project iphone-portrait --project pixel-portrait"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.0"
+  }
+}
