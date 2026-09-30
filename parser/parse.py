@@ -12,11 +12,12 @@ import os
 import pathlib
 import re
 import sys
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 
 try:
-    from . import energy
+    from . import energy, quota
     from .attribution import attribute_sessions, extract_paths, load_config
     from .models import (
         SessionStats,
@@ -30,6 +31,7 @@ try:
     )
 except ImportError:  # run as a script / imported via sys.path (server/serve.py)
     import energy
+    import quota
     from attribution import attribute_sessions, extract_paths, load_config
     from models import (
         SessionStats,
@@ -456,6 +458,12 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
         plan_info["suggested_limit"] = PLAN_LIMITS["standard"]
         plan_info["limits"] = PLAN_LIMITS
 
+    quota_info = quota.summarize(quota.QUOTA_LOG, all_turns, time.time())
+    implied_5h = ((quota_info or {}).get("five_hour") or {}).get("implied_limit_cost_tokens")
+    if implied_5h:
+        plan_info["suggested_limit"] = implied_5h
+        plan_info["limit_source"] = "statusline"
+
     by_day = aggregate_by_day(sessions)
     by_project = aggregate_by_turn_project(sessions)
     by_tag = aggregate_by_tag(sessions)
@@ -464,6 +472,7 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
         "generated_at": datetime.now(tz=UTC).isoformat(),
         "plan_info": plan_info,
         "rolling": rolling_windows(all_turns),
+        "quota": quota_info,
         "totals": {
             "sessions": len(sessions),
             "turns": total_turns,

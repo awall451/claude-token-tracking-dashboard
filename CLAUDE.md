@@ -38,6 +38,8 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 
 **`parser/energy.py`** + **`parser/energy.toml`** — token → Wh/water/CO₂e estimates. `annotate_sessions()` sets `wh: [low, central, high]` on every turn; aggregates in `models.py` sum it via `_add_wh()`; `build_output()` emits `impact` (total, last_30d, by_project, by_tag, by_day, assumptions). Coefficients must stay sourced in comments and always be shown as ranges.
 
+**`parser/quota.py`** + **`extras/statusline-tee.sh`** — real Pro/Max quota. The wrapper logs `{ts, session_id, rate_limits}` (epoch seconds; `five_hour`/`seven_day` each `{used_percentage, resets_at}`) to `QUOTA_LOG` (default `<CLAUDE_DIR>/token-tracker/quota.jsonl`) and pipes stdin to the real statusline. `summarize()` → latest % per window, `implied_limit_cost_tokens` (window cost tokens ÷ %; only when ≥5%), 15-min history. When present it overrides `plan_info.suggested_limit`.
+
 **`parser/models.py`** — pure data logic with no I/O. `SessionStats` dataclass holds per-session aggregates. Module-level functions (`aggregate_by_day`, `aggregate_by_project`, `caveman_comparison`, `rolling_windows`) transform lists of `SessionStats` into the nested dicts that `stats.json` emits. The 5h rolling window in `rolling_windows()` is the key metric since Anthropic uses a 5-hour reset window for rate limiting.
 
 **`server/serve.py`** — single-file HTTP server. Imports `parser/parse.py` directly (via `sys.path` insertion) and runs `refresh_stats()` on a background thread every `REFRESH_INTERVAL` seconds. Serves `frontend/` as static files and `stats.json` from `STATS_PATH`. Two API endpoints: `POST /api/refresh` (force re-parse) and `GET /api/status`.
