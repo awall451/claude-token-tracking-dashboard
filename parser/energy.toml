@@ -1,0 +1,46 @@
+# Energy / water / carbon coefficients for Claude Code usage estimates.
+#
+# No AI provider publishes per-token energy. Every figure below is a third-party
+# estimate, back-derived from pricing or from open-model benchmarks, and the true
+# value may sit outside the range. The dashboard always shows [low, central, high].
+# Override with ENERGY_CONFIG=/path/to/your.toml.
+
+# Grid carbon intensity, gCO2e per kWh. 340 ≈ US-average grid as implied by
+# Hausfather (370 kgCO2e / 1,100 kWh per year of heavy use):
+#   https://www.theclimatebrink.com/p/the-real-energy-use-of-agentic-ai
+# Market-based figures are lower (Google's per-prompt disclosure implies ~125):
+#   https://cloud.google.com/blog/products/infrastructure/measuring-the-environmental-impact-of-ai-inference
+grid_gco2_per_kwh = 340
+
+# On-site (data-center cooling) water per Wh. Google: 0.26 mL / 0.24 Wh per median
+# Gemini prompt (≈1.1); OpenAI's stated ~0.32 mL / 0.34 Wh (≈0.95). Excludes water
+# evaporated at power plants, which studies put at 2.4–12x on-site (Pacific Institute,
+# LBNL) — see the dashboard's water note.
+water_onsite_ml_per_wh = 1.0
+
+# Wh per million tokens, [low, central, high], for a frontier-size model.
+#  high    = Simon Couch's deliberately pessimistic Claude rates, back-solved from
+#            Epoch AI's 100k-context estimate and Anthropic's price ratios:
+#            https://simonpcouch.com/blog/2026-01-20-cc-impact/
+#  low     = Epoch AI short-context GPT-4o anchor (~0.6 Wh per 1k output tokens),
+#            input/cache-write at 1/10 of output, cache read at 10% of input
+#            (Hausfather's assumption): https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use
+#  central = geometric mean of low and high.
+# Sanity check: Hausfather's 8-week log (3.2B tokens, 96% cache reads) comes out at
+# ~33 / ~80 / ~200 kWh on these rates vs his own 70–330 kWh estimate, so the
+# central value leans low.
+[wh_per_mtok]
+input       = [60, 153, 390]
+cache_write = [60, 171, 490]
+cache_read  = [6, 15.3, 39]
+output      = [600, 1082, 1950]
+
+# Per-model scaling relative to the frontier-size rates above, matched by substring
+# of the model id (first match wins, in file order). Smaller models used 5–7x less
+# energy per token in Hausfather's audit → haiku ≈ 0.17. Sonnet's 0.5 is an
+# unsourced assumption. "<synthetic>" entries are client-side, not model calls.
+[model_multiplier]
+"<synthetic>" = 0.0
+haiku = 0.17
+sonnet = 0.5
+default = 1.0

@@ -204,6 +204,7 @@ def test_anonymize_covers_attributed_projects_and_tags():
         "by_project": {"client-secret-app": {}},
         "by_launch_dir": {"/home/u/hub": {}},
         "by_tag": {"client": {"Secret Corp": {"turns": 1}}},
+        "impact": {"by_project": {"client-secret-app": {}}, "by_tag": {"client": {"Secret Corp": {}}}},
         "sessions": [{
             "project_path": "/home/u/hub", "session_name": "x",
             "projects": {"client-secret-app": 5},

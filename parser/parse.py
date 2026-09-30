@@ -16,6 +16,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 try:
+    from . import energy
     from .attribution import attribute_sessions, extract_paths, load_config
     from .models import (
         SessionStats,
@@ -28,6 +29,7 @@ try:
         rolling_windows,
     )
 except ImportError:  # run as a script / imported via sys.path (server/serve.py)
+    import energy
     from attribution import attribute_sessions, extract_paths, load_config
     from models import (
         SessionStats,
@@ -408,8 +410,32 @@ def parse_all(projects_dir: pathlib.Path | None = None,
     return sessions
 
 
-def build_output(sessions: list[SessionStats], tags_config=None) -> dict:
+def _impact_block(sessions, by_day, by_project, by_tag, config) -> dict:
+    """Energy/water/carbon ranges for the dashboard's Environmental Impact panel."""
+    total = [0.0, 0.0, 0.0]
+    for s in sessions:
+        for i, x in enumerate(s.wh):
+            total[i] += x
+    last_30 = list(by_day.items())[-30:]
+    last_30_wh = [sum(d["wh"][i] for _, d in last_30) for i in range(3)]
+
+    def with_impact(groups):
+        return {k: energy.impact(v["wh"], config) for k, v in groups.items()}
+
+    return {
+        "total": energy.impact(total, config),
+        "last_30d": energy.impact(last_30_wh, config),
+        "by_project": with_impact(by_project),
+        "by_tag": {k: with_impact(v) for k, v in by_tag.items()},
+        "by_day": {day: round(d["wh"][1], 3) for day, d in by_day.items()},
+        "assumptions": energy.config_summary(config),
+    }
+
+
+def build_output(sessions: list[SessionStats], tags_config=None, energy_config=None) -> dict:
     attribute_sessions(sessions, tags_config if tags_config is not None else load_config())
+    energy_config = energy_config or energy.load_config()
+    energy.annotate_sessions(sessions, energy_config)
     total_input = sum(s.input_tokens for s in sessions)
     total_cache_creation = sum(s.cache_creation_tokens for s in sessions)
     total_cache_read = sum(s.cache_read_tokens for s in sessions)
@@ -431,6 +457,8 @@ def build_output(sessions: list[SessionStats], tags_config=None) -> dict:
         plan_info["limits"] = PLAN_LIMITS
 
     by_day = aggregate_by_day(sessions)
+    by_project = aggregate_by_turn_project(sessions)
+    by_tag = aggregate_by_tag(sessions)
 
     return {
         "generated_at": datetime.now(tz=UTC).isoformat(),
@@ -455,9 +483,10 @@ def build_output(sessions: list[SessionStats], tags_config=None) -> dict:
         "caveman_comparison": caveman_comparison(sessions),
         "by_day": by_day,
         # Per-turn attribution (hubs/projects/tags from tags.toml); by_launch_dir = old per-session view
-        "by_project": aggregate_by_turn_project(sessions),
+        "by_project": by_project,
         "by_launch_dir": aggregate_by_project(sessions),
-        "by_tag": aggregate_by_tag(sessions),
+        "by_tag": by_tag,
+        "impact": _impact_block(sessions, by_day, by_project, by_tag, energy_config),
         "sessions": [s.to_dict() for s in sorted(sessions, key=lambda x: x.start_ts)],
     }
 
@@ -476,10 +505,16 @@ def anonymize_output(output: dict) -> dict:
     for key in ("by_project", "by_launch_dir"):
         if key in out:
             out[key] = {mapping.get(k, k): v for k, v in out[key].items()}
-    out["by_tag"] = {
-        tag_key: {f"{tag_key}-{i+1}": v for i, (_, v) in enumerate(sorted(values.items()))}
-        for tag_key, values in out.get("by_tag", {}).items()
-    }
+    def anon_tags(by_tag):
+        return {
+            tag_key: {f"{tag_key}-{i+1}": v for i, (_, v) in enumerate(sorted(values.items()))}
+            for tag_key, values in by_tag.items()
+        }
+
+    out["by_tag"] = anon_tags(out.get("by_tag", {}))
+    if "impact" in out:
+        out["impact"]["by_project"] = {mapping.get(k, k): v for k, v in out["impact"]["by_project"].items()}
+        out["impact"]["by_tag"] = anon_tags(out["impact"]["by_tag"])
     for s in out["sessions"]:
         s["project_path"] = mapping.get(s["project_path"], s["project_path"])
         s["session_name"] = ""  # usually the first prompt text — never safe to share
