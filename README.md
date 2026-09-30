@@ -101,6 +101,15 @@ Each turn is matched on the paths its tool calls touch (Edit/Write/Read, `cd` in
 
 The Docker setup mounts `~/.config/claude-token-tracker` read-only and passes `HOME_DIR` so `~` resolves to your host home.
 
+## Cost per project
+
+Every turn gets two dollar figures:
+
+- **API-list-price** (`api_usd`) — tokens × Anthropic's published per-model rates ([`parser/pricing.toml`](parser/pricing.toml)), including 5-minute vs 1-hour cache-write rates. Reconciles with Claude Code's own per-session `cost-state` (median ratio 0.99 on real data). Good for quoting client work.
+- **Subscription share** (`sub_usd`) — your plan's monthly fee split across projects by their share of that month's API-list usage. What the work actually cost you. Set `[billing]` in `tags.toml` (see `tags.example.toml`).
+
+Per project the tracker also reports active hours (gaps ≤ 15 min between turns), active days, prompts, sessions and subagents, files touched, lines added/removed (from Edit/Write calls), tool calls, model mix and average context size — raw signals for effort and complexity, no invented score.
+
 ## Environmental estimates
 
 No AI provider publishes energy per token, so the dashboard estimates it from token counts using coefficients in [`parser/energy.toml`](parser/energy.toml): Wh per million tokens for fresh input, cache writes, cache reads and output, scaled per model family, then converted to on-site cooling water and CO₂e at a configurable grid intensity. Every coefficient cites its source; the range spans Epoch AI's short-context figures (low) to Simon Couch's deliberately pessimistic Claude rates (high). Treat the numbers as order-of-magnitude, and override them with `ENERGY_CONFIG=/path/to/your.toml` if you have better data.

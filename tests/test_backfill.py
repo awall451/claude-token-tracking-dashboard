@@ -160,3 +160,26 @@ def test_exact_sources_replace_earlier_estimates(tmp_path):
     by_id = _by_id(db)
     assert not by_id["last"].estimated and by_id["last"].output_tokens == 7
     assert not by_id["snap1"].estimated and by_id["snap1"].output_tokens == 3
+
+
+def test_estimate_model_is_that_months_dominant_model_by_tokens(tmp_path):
+    db = ledger.connect(tmp_path / "l.sqlite")
+    _exact_session(db, "exact", "/p", T0)                                  # Sep: opus-5-5
+    april = T0 - 160 * DAY
+    s = SessionStats(session_id="apr", project_path="/q", start_ts=april, end_ts=april)
+    s.turns_raw = [
+        {"rid": "a", "ts": april, "model": "claude-sonnet-4-6", "input": 1, "cache_creation": 0, "cache_read": 900,
+         "output": 1, "cost": 2, "source": "claude_json"},
+        {"rid": "b", "ts": april, "model": "claude-haiku-4-5", "input": 50, "cache_creation": 0, "cache_read": 0,
+         "output": 5, "cost": 55, "source": "claude_json"},                  # frequent but tiny side calls
+    ]
+    recompute_totals(s)
+    ledger.ingest(db, [s])
+    hist = _history(tmp_path, [("exact", "/p", T0, "hi"), ("old-apr", "/p", april + DAY, "x"),
+                               ("old-jun", "/p", T0 - 100 * DAY, "y")])
+    backfill.run(db, history_path=hist, claude_json_path=None)
+    by_id = _by_id(db)
+    assert by_id["old-apr"].turns_raw[0]["model"] == "claude-sonnet-4-6"
+    # June has no exact data: nearest month with data wins (April is ~60 days away,
+    # September 100 days away)
+    assert by_id["old-jun"].turns_raw[0]["model"] == "claude-sonnet-4-6"

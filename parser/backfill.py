@@ -22,6 +22,7 @@ import json
 import pathlib
 import statistics
 from collections import Counter, defaultdict
+from datetime import UTC, datetime
 
 try:
     from . import ledger
@@ -155,15 +156,30 @@ def _exact_per_prompt(db, prompts: dict) -> list[tuple[str, dict, str]]:
     return out
 
 
-def _profiles(samples) -> tuple[dict, dict]:
-    """Median per-prompt tokens + dominant model, per project and globally ('*')."""
+def _profiles(samples) -> dict:
+    """Median per-prompt tokens by class, per project and globally ('*')."""
     grouped = defaultdict(list)
-    for project, per_prompt, model in samples:
-        grouped[project].append((per_prompt, model))
-        grouped["*"].append((per_prompt, model))
-    tokens = {p: {c: round(statistics.median(x[0][c] for x in rows)) for c in CLASSES} for p, rows in grouped.items()}
-    model = {p: Counter(x[1] for x in rows).most_common(1)[0][0] for p, rows in grouped.items()}
-    return tokens, model
+    for project, per_prompt, _model in samples:
+        grouped[project].append(per_prompt)
+        grouped["*"].append(per_prompt)
+    return {p: {c: round(statistics.median(x[c] for x in rows)) for c in CLASSES} for p, rows in grouped.items()}
+
+
+def _monthly_models(db) -> list[tuple[float, str]]:
+    """(token-weighted mean ts, dominant model by tokens) for each month of exact data.
+    Weighting by tokens keeps frequent-but-tiny side calls (e.g. Haiku titles) from winning."""
+    tokens = defaultdict(Counter)
+    ts_sum = defaultdict(float)
+    for ts, model, tok in db.execute("SELECT ts, model, input + cache_creation + cache_read + output FROM turns "
+                                     "WHERE estimated = 0 AND model NOT IN ('unknown', '<synthetic>')"):
+        month = datetime.fromtimestamp(ts / 1000, tz=UTC).strftime("%Y-%m")
+        tokens[month][model] += tok
+        ts_sum[month] += ts * tok
+    return [(ts_sum[m] / max(sum(c.values()), 1), c.most_common(1)[0][0]) for m, c in tokens.items()]
+
+
+def _model_at(ts: int, monthly: list[tuple[float, str]]) -> str:
+    return min(monthly, key=lambda mm: abs(mm[0] - ts))[1] if monthly else "unknown"
 
 
 def _coverage_start(db) -> int | None:
@@ -175,7 +191,8 @@ def estimate(db, prompts: dict) -> None:
     samples = _exact_per_prompt(db, prompts)
     if start is None or not samples:
         return
-    tokens, model = _profiles(samples)
+    tokens = _profiles(samples)
+    monthly = _monthly_models(db)
     known = _known_sessions(db)
     sessions = []
     for sid, rows in prompts.items():
@@ -183,7 +200,8 @@ def estimate(db, prompts: dict) -> None:
             continue
         project = rows[0]["project_path"]
         key = project if project in tokens else "*"
-        turns = [_turn(f"est:{r['ts']}", r["ts"], model[key], tokens[key], "estimate", estimated=True) for r in rows]
+        model = _model_at(rows[0]["ts"], monthly)
+        turns = [_turn(f"est:{r['ts']}", r["ts"], model, tokens[key], "estimate", estimated=True) for r in rows]
         sessions.append(_session(sid, project, turns))
     ledger.ingest(db, sessions)
 

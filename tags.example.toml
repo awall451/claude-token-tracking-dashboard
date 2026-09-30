@@ -32,3 +32,11 @@ tags = { client = "my-business", kind = "tooling" }
 # Extra tags for subagents spawned by a skill (transcript `attributionSkill`).
 [skills]
 deep-research = { kind = "research" }
+
+# Subscription cost, for the "your cost" column: each month's fee is split across
+# projects by their share of that month's API-list-price usage. The plan in effect at
+# the end of a month applies to the whole month.
+[billing]
+plans = [
+  { from = "2026-01-01", usd_per_month = 100 },
+]
