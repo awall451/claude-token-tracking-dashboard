@@ -6,3 +6,9 @@ addopts = "-q"
 [project]
 name = "claude-token-tracker"
 requires-python = ">=3.11"  # tomllib
+
+[tool.ruff.lint.isort]
+# Same import grouping no matter which directory ruff runs from (server/ imports parser
+# modules by bare name via sys.path).
+known-first-party = ["parser", "server", "api", "attribution", "backfill", "energy", "ledger",
+                     "metrics", "models", "parse", "pricing", "quota"]
