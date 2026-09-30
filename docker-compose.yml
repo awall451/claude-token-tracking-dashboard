@@ -2,7 +2,7 @@ services:
   claude-token-tracker:
     build: .
     ports:
-      - "9420:9420"
+      - "127.0.0.1:9420:9420"
     volumes:
       - ~/.claude:/data/.claude:ro
       - ~/.claude.json:/data/.claude.json:ro
