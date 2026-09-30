@@ -61,6 +61,18 @@ python3 -m http.server 9420
 # open http://localhost:9420/frontend/
 ```
 
+## History (ledger)
+
+Claude Code deletes transcripts after `cleanupPeriodDays` (default **30**). The tracker upserts every parsed turn into a SQLite ledger (`LEDGER_PATH`, a Docker volume by default) and builds the dashboard from it, so totals keep growing after transcripts are gone. It stores token counts, models, timestamps, file paths touched and session names — never prompt or response text.
+
+To stop losing transcripts in the first place, raise the retention in `~/.claude/settings.json`:
+
+```json
+{ "cleanupPeriodDays": 3650 }
+```
+
+Extra transcript roots (e.g. an archived copy of `~/.claude/projects`) can be ingested with `ARCHIVE_DIRS` (Docker mounts `~/.local/share/claude-token-tracker/transcript-archive/projects`) or `parse.py --archive DIR --ledger ledger.sqlite`. Sessions present in several roots are read once.
+
 ## Project attribution
 
 By default every turn counts toward the directory Claude Code was launched in. To split usage when you work across several repos from one directory (a "hub"), create `~/.config/claude-token-tracker/tags.toml` — start from [`tags.example.toml`](tags.example.toml):

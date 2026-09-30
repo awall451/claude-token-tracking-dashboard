@@ -3,7 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-_INTERNAL_TURN_KEYS = {"paths", "cwd", "exchange", "tag"}
+_INTERNAL_TURN_KEYS = {"paths", "cwd", "exchange", "tag", "rid", "models"}
 
 
 def _add_wh(acc: list, turn: dict) -> None:
@@ -117,6 +117,27 @@ class SessionStats:
             "agent_type": self.agent_type,
             "reported": self.reported,
         }
+
+
+def recompute_totals(s: "SessionStats") -> None:
+    """Rebuild a session's token aggregates from its per-turn records (single source of truth)."""
+    s.models = defaultdict(int)
+    s.turns = len(s.turns_raw)
+    s.input_tokens = s.cache_creation_tokens = s.cache_read_tokens = s.output_tokens = 0
+    s.cache_creation_5m_tokens = s.cache_creation_1h_tokens = s.thinking_tokens = 0
+    s.web_search_requests = s.web_fetch_requests = 0
+    for t in s.turns_raw:
+        for m in t.get("models") or [t.get("model", "unknown")]:
+            s.models[m] += 1
+        s.input_tokens += t["input"]
+        s.cache_creation_tokens += t["cache_creation"]
+        s.cache_read_tokens += t["cache_read"]
+        s.output_tokens += t["output"]
+        s.cache_creation_5m_tokens += t.get("cache_write_5m", 0)
+        s.cache_creation_1h_tokens += t.get("cache_write_1h", 0)
+        s.thinking_tokens += t.get("thinking", 0)
+        s.web_search_requests += t.get("web_search", 0)
+        s.web_fetch_requests += t.get("web_fetch", 0)
 
 
 def _utc_day(ts_ms: int) -> str:
