@@ -64,6 +64,13 @@ CREATE TABLE IF NOT EXISTS turns (
     source TEXT NOT NULL DEFAULT 'transcript',
     estimated INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS prompts (
+    session_id TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    project_path TEXT NOT NULL DEFAULT '',
+    is_command INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, ts)
+);
 CREATE INDEX IF NOT EXISTS turns_session ON turns(session_id);
 CREATE INDEX IF NOT EXISTS turns_ts ON turns(ts);
 """
@@ -93,6 +100,7 @@ def _session_row(s: SessionStats) -> dict:
         "session_name": s.session_name, "start_ts": s.start_ts, "end_ts": s.end_ts,
         "caveman": int(s.caveman), "caveman_mode": s.caveman_mode,
         "reported_json": json.dumps(s.reported or {}),
+        "source": s.turns_raw[0].get("source", "transcript") if s.turns_raw else "transcript",
     }
 
 
