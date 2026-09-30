@@ -89,7 +89,7 @@ class SessionStats:
                 out[t["project"]] = out.get(t["project"], 0) + t["cost"]
         return out
 
-    def to_dict(self):
+    def to_dict(self, include_turns: bool = True):
         return {
             "session_id": self.session_id,
             "project_path": self.project_path,
@@ -109,7 +109,7 @@ class SessionStats:
             "start_ts": self.start_ts,
             "end_ts": self.end_ts,
             "turns_raw": [{k: v for k, v in t.items() if k not in _INTERNAL_TURN_KEYS}
-                          for t in self.turns_raw],
+                          for t in self.turns_raw] if include_turns else [],
             "projects": self.projects_breakdown(),
             "wh": self.wh,
             "estimated": self.estimated,

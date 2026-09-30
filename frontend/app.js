@@ -926,7 +926,7 @@ function renderSessionsTable(sessions) {
       tr.addEventListener('click', () => {
         const sid = tr.dataset.sid;
         const s = sessions.find(x => x.session_id === sid);
-        if (s) openSessionDetail(s);
+        if (s) openSession(s.session_id);
       });
     });
 
@@ -940,23 +940,28 @@ function renderSessionsTable(sessions) {
   render();
 }
 
-async function main() {
-  let data;
-  try {
-    const res = await fetch('/stats.json');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    data = await res.json();
-  } catch (e) {
-    document.body.innerHTML = `<div style="padding:40px;color:#f85149">
-      Failed to load stats.json: ${e.message}<br><br>
-      Run: <code>python3 parser/parse.py --out stats.json</code>
-    </div>`;
-    return;
-  }
+async function loadStats() {
+  const res = await fetch('/stats.json');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  document.getElementById('generated-at').textContent = `Updated ${new Date(data.generated_at).toLocaleString()}`;
+  return data;
+}
 
-  const ts = new Date(data.generated_at).toLocaleString();
-  document.getElementById('generated-at').textContent = `Updated ${ts}`;
+// Session detail needs per-turn data, which stats.json omits — fetch it on demand.
+async function openSession(sessionId) {
+  const res = await fetch(`/api/session?id=${encodeURIComponent(sessionId)}`);
+  if (res.ok) openSessionDetail(await res.json());
+}
 
+function initModal() {
+  const modal = document.getElementById('session-modal');
+  document.getElementById('modal-close').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === e.currentTarget) modal.hidden = true; });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.hidden = true; });
+}
+
+function renderUsageView(data) {
   const softLimitInput = document.getElementById('soft-limit');
   const planSelect = document.getElementById('plan-select');
   const planInfo = data.plan_info || {};
@@ -1007,35 +1012,33 @@ async function main() {
   renderCards(data.totals, data.lifetime);
   renderLifetime(data.lifetime);
   renderRolling(data.rolling, getSoftLimit());
+  planSelect.addEventListener('change', () => { applyPlanLimit(); reRenderRolling(); });
+  softLimitInput.addEventListener('change', reRenderRolling);
 
-  planSelect.addEventListener('change', () => {
-    applyPlanLimit();
-    reRenderRolling();
-  });
-
-  softLimitInput.addEventListener('change', () => {
-    reRenderRolling();
-  });
-
-  renderCavemanComparison(data);
-  renderCavemanAdoption(data.by_day);
   renderDaily(data.by_day, data.lifetime && data.lifetime.rolling_7d_average);
   renderByProject(data);
   renderImpact(data.impact);
   renderModels(data.sessions);
   renderCache(data.totals);
-  renderSessionsTable([...data.sessions].reverse()); // newest first default
-
-  // Modal close
-  document.getElementById('modal-close').addEventListener('click', () => {
-    document.getElementById('session-modal').hidden = true;
-  });
-  document.getElementById('session-modal').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) e.currentTarget.hidden = true;
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') document.getElementById('session-modal').hidden = true;
-  });
 }
 
-main();
+function renderCavemanView(data) {
+  renderCavemanComparison(data);
+  renderCavemanAdoption(data.by_day);
+}
+
+function renderSessionsView(data, project) {
+  const select = document.getElementById('sessions-project');
+  if (select.options.length <= 1) {
+    const names = Object.keys(data.projects || {}).sort((a, b) => shortProject(a).localeCompare(shortProject(b)));
+    select.insertAdjacentHTML('beforeend',
+      names.map(n => `<option value="${esc(n)}">${esc(shortProject(n))}</option>`).join(''));
+    select.addEventListener('change', () => {
+      location.hash = select.value ? `#/sessions?project=${encodeURIComponent(select.value)}` : '#/sessions';
+    });
+  }
+  select.value = project || '';
+  const rows = [...data.sessions].reverse()   // newest first
+    .filter(s => !project || (s.projects && project in s.projects));
+  renderSessionsTable(rows);
+}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Token usage tracker and dashboard for Claude Code (Max plan). Parses local Claude session data, visualizes usage over time, and compares efficiency of caveman mode vs normal mode.
+Per-project accounting for Claude Code: tokens, API-list and subscription dollars, active time, energy and effort signals per project (and session), built from local session data into a durable SQLite ledger. Caveman-vs-normal is a secondary, explicitly approximate view.
 
 ## Commands
 
@@ -51,6 +51,10 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 **`parser/models.py`** — pure data logic with no I/O. `SessionStats` dataclass holds per-session aggregates. Module-level functions (`aggregate_by_day`, `aggregate_by_project`, `caveman_comparison`, `rolling_windows`) transform lists of `SessionStats` into the nested dicts that `stats.json` emits. The 5h rolling window in `rolling_windows()` is the key metric since Anthropic uses a 5-hour reset window for rate limiting.
 
 **`server/serve.py`** — single-file HTTP server. Imports `parser/parse.py` directly (via `sys.path` insertion) and runs `refresh_stats()` on a background thread every `REFRESH_INTERVAL` seconds. Serves `frontend/` as static files and `stats.json` from `STATS_PATH`. Two API endpoints: `POST /api/refresh` (force re-parse) and `GET /api/status`.
+
+**`server/api.py`** — pure JSON handlers over the annotated sessions kept by serve.py after each refresh: `/api/projects?range&group`, `/api/project?name&range`, `/api/sessions?project&range`, `/api/session?id` (the only place per-turn data is served; `stats.json` omits `turns_raw`). Ranges: 7d/30d/90d/all. Project tags come from the project's most recent turn.
+
+**`frontend/router.js` + `frontend/projects.js`** — hash routes `#/projects` (home), `#/project/<name>`, `#/sessions?project=`, `#/usage`, `#/caveman`; views are `<section data-view>` blocks toggled with `[hidden]`. Stats-based views render on first show (Chart.js can't size hidden canvases). Classic scripts sharing globals from app.js, no build step.
 
 **`frontend/app.js`** — fetches `/stats.json` on load, renders all charts and tables with Chart.js. The soft-limit input auto-populates from `rolling.suggested_limit` (historical peak 5h window + 10% headroom). Session rows are clickable and open a detail modal with per-turn context growth and token composition charts.
 

@@ -552,7 +552,8 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
         "projects": metrics.by_project(sessions),
         "billing_configured": bool(billing.plans),
         "impact": _impact_block(sessions, by_day, by_project, by_tag, energy_config),
-        "sessions": [s.to_dict() for s in sorted(sessions, key=lambda x: x.start_ts)],
+        # Per-turn detail is served on demand by /api/session?id=… to keep stats.json small
+        "sessions": [s.to_dict(include_turns=False) for s in sorted(sessions, key=lambda x: x.start_ts)],
     }
 
 

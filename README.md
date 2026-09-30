@@ -1,6 +1,8 @@
 # Claude Token Tracker
 
-Dashboard for tracking Claude Code token usage from local session data. Useful on a Claude Pro or Max subscription when you want visibility into how much you're consuming and when.
+Per-project accounting for Claude Code: how many tokens, dollars, hours and kilowatt-hours went into each project, built from local session data and kept in a durable ledger so history survives Claude Code's transcript cleanup.
+
+Views: **Projects** (home — every project with API $, your subscription share, active time, energy, files and lines touched; tap one for its timeline, models, signals and sessions) · **Sessions** (filterable explorer with turn-by-turn detail) · **Usage** (rolling windows, real quota, daily totals, environmental impact) · **Caveman** (approximate caveman-vs-normal comparison).
 
 ![Dashboard screenshot](docs/screenshot.png)
 

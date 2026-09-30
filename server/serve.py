@@ -19,10 +19,11 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # Ensure parser/ is importable
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "parser"))
+import api
 import backfill as backfill_mod
 import ledger as ledger_mod
 import parse as parser_mod
@@ -39,6 +40,7 @@ _last_refreshed: float = 0.0
 # Per-file parse results keyed by mtime/size; unchanged transcripts are not re-read.
 _parse_cache: dict = {}
 _ledger = None
+_sessions: list = []   # annotated sessions from the last refresh, for the JSON API
 
 
 def refresh_stats() -> bool:
@@ -53,6 +55,8 @@ def refresh_stats() -> bool:
         backfill_mod.run(_ledger, parser_mod.HISTORY_FILE, parser_mod.CLAUDE_JSON)
         sessions = ledger_mod.load_sessions(_ledger)   # durable history, not just what's on disk
         output = parser_mod.build_output(sessions)
+        global _sessions
+        _sessions = sessions
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = STATS_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(output))
@@ -106,6 +110,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_body(200, "application/json", STATS_PATH.read_bytes())
             else:
                 self.send_body(503, "text/plain", b"stats not available yet")
+            return
+
+        query = parse_qs(urlparse(self.path).query)
+        handlers = {
+            "/api/projects": lambda: api.projects(_sessions, query),
+            "/api/project": lambda: api.project(_sessions, (query.get("name") or [""])[0], query),
+            "/api/sessions": lambda: api.sessions(_sessions, query),
+            "/api/session": lambda: api.session(_sessions, (query.get("id") or [""])[0]),
+        }
+        if path in handlers:
+            result = handlers[path]()
+            if result is None:
+                self.send_body(404, "application/json", b'{"error": "not found"}')
+            else:
+                self.send_body(200, "application/json", json.dumps(result).encode())
             return
 
         # /api/status
