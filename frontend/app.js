@@ -335,45 +335,90 @@ function renderDaily(byDay, rolling7d) {
   });
 }
 
-function renderByProject(byProject) {
-  const entries = Object.entries(byProject)
-    .sort((a, b) => b[1].total_cost_tokens - a[1].total_cost_tokens)
-    .slice(0, 15);
+const GROUP_SUBTITLES = {
+  project: 'Cost tokens per project, attributed per turn from the files each tool call touched',
+  launch:  'Cost tokens per directory Claude Code was launched in (the old per-session view)',
+};
+let _projectChart = null;
 
-  const labels = entries.map(([p]) => shortProject(p));
-  const costData = entries.map(([, d]) => d.total_cost_tokens);
-  const cavemanData = entries.map(([, d]) => d.caveman_sessions);
+function renderByProject(data) {
+  const select = document.getElementById('project-groupby');
+  const tagKeys = Object.keys(data.by_tag || {}).sort();
+  const options = [
+    ['project', 'project'],
+    ...tagKeys.map(k => [`tag:${k}`, `tag: ${k}`]),
+    ['launch', 'launch dir'],
+  ];
+  select.innerHTML = options.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
 
-  new Chart(document.getElementById('chart-project'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Cost Tokens',
-          data: costData,
-          backgroundColor: COLORS.blue + '99',
-          borderColor: COLORS.blue,
-          borderWidth: 1,
-          borderRadius: 4,
-          yAxisID: 'y',
+  const callout = document.getElementById('project-callout');
+  if (!tagKeys.length) {
+    callout.hidden = false;
+    callout.innerHTML = `<strong>Tip:</strong> working across several repos from one directory? Add
+      <code>~/.config/claude-token-tracker/tags.toml</code> (see <code>tags.example.toml</code>) to split usage by
+      project and group by tags like <code>client</code> or <code>kind</code>. Use <code>/tag &lt;name&gt;</code> in a
+      session to override.`;
+  }
+
+  const draw = () => {
+    const mode = select.value;
+    let source;
+    if (mode === 'launch') source = data.by_launch_dir || {};
+    else if (mode.startsWith('tag:')) source = (data.by_tag || {})[mode.slice(4)] || {};
+    else source = data.by_project || {};
+    document.getElementById('project-sub').textContent = mode.startsWith('tag:')
+      ? `Cost tokens per "${mode.slice(4)}" tag value (turns without this tag are not shown)`
+      : GROUP_SUBTITLES[mode];
+
+    const entries = Object.entries(source)
+      .sort((a, b) => b[1].total_cost_tokens - a[1].total_cost_tokens)
+      .slice(0, 15);
+
+    if (_projectChart) _projectChart.destroy();
+    _projectChart = new Chart(document.getElementById('chart-project'), {
+      type: 'bar',
+      data: {
+        labels: entries.map(([p]) => shortProject(p)),
+        datasets: [
+          {
+            label: 'Cost Tokens',
+            data: entries.map(([, d]) => d.total_cost_tokens),
+            backgroundColor: COLORS.blue + '99',
+            borderColor: COLORS.blue,
+            borderWidth: 1,
+            borderRadius: 4,
+            yAxisID: 'y',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              afterLabel: ctx => {
+                const d = entries[ctx.dataIndex][1];
+                return `${d.turns} turns · ${d.sessions} sessions · ${fmt(d.cache_read_tokens)} cache reads`;
+              },
+            },
+          },
         },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: '#21262d' } },
-        y: {
-          grid: { display: false },
-          ticks: { autoSkip: false },
+        scales: {
+          x: { grid: { color: '#21262d' } },
+          y: {
+            grid: { display: false },
+            ticks: { autoSkip: false },
+          },
         },
       },
-    },
-  });
+    });
+  };
+
+  select.onchange = draw;
+  draw();
 }
 
 function renderModels(sessions) {
@@ -562,6 +607,14 @@ function openSessionDetail(session) {
   const reported = session.reported && session.reported.cost_usd !== undefined
     ? `<span title="Claude Code's own tally (cost-state), API list prices">API-equiv: <strong>${fmtUsd(session.reported.cost_usd)}</strong></span>`
     : '';
+  const projEntries = Object.entries(session.projects || {}).sort((a, b) => b[1] - a[1]);
+  const projTotal = projEntries.reduce((n, [, v]) => n + v, 0) || 1;
+  const projectSplit = projEntries.length > 1
+    ? `<div class="modal-meta" title="Cost tokens per project, attributed per turn from files touched (tags.toml / /tag)">
+        <span>Projects:</span>
+        ${projEntries.map(([p, v]) => `<span>${esc(shortProject(p))} <strong>${Math.round(v / projTotal * 100)}%</strong></span>`).join('')}
+      </div>`
+    : '';
   document.getElementById('modal-header').innerHTML = `
     <h2>${esc(shortProject(session.project_path))} &nbsp;${modeLabel}${agentBadge}</h2>
     ${sessionNameHtml}
@@ -574,6 +627,7 @@ function openSessionDetail(session) {
       <span>Cache hit: <strong>${(session.cache_hit_rate * 100).toFixed(1)}%</strong></span>
       <span>Model: <strong>${models}</strong></span>
     </div>
+    ${projectSplit}
   `;
 
   // Educational callout — adapt message based on session characteristics
@@ -858,7 +912,7 @@ async function main() {
   renderCavemanComparison(data);
   renderCavemanAdoption(data.by_day);
   renderDaily(data.by_day, data.lifetime && data.lifetime.rolling_7d_average);
-  renderByProject(data.by_project);
+  renderByProject(data);
   renderModels(data.sessions);
   renderCache(data.totals);
   renderSessionsTable([...data.sessions].reverse()); // newest first default

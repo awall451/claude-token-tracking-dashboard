@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from parser.models import (
     SessionStats,
@@ -17,7 +17,7 @@ def _session(**kwargs) -> SessionStats:
 
 
 def _ts(year, month, day) -> int:
-    return int(datetime(year, month, day, tzinfo=timezone.utc).timestamp() * 1000)
+    return int(datetime(year, month, day, tzinfo=UTC).timestamp() * 1000)
 
 
 def test_session_stats_total_cost_excludes_cache_reads():

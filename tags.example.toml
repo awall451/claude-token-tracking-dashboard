@@ -1,0 +1,34 @@
+# Project attribution config for claude-token-tracker.
+# Copy to ~/.config/claude-token-tracker/tags.toml (or set TAGS_CONFIG).
+#
+# Each assistant turn is attributed to a project from the files its tool calls
+# touch (Edit/Write/Read paths, `cd` in Bash), smoothed per user prompt.
+# Turns with no file signal inherit the previous prompt's project.
+# Manual override inside a session: /tag <project-name>  (see extras/commands/tag.md)
+#
+# Without this file every turn is attributed to the session's launch directory.
+
+# Hub: a directory holding many projects. The first path segment below it becomes
+# the project name, e.g. ~/work/api/src/x.py → project "api".
+[[hub]]
+path = "~/work"
+tags = { client = "my-business" }
+
+[[hub]]
+path = "~/lab"
+tags = { client = "personal" }
+
+# Explicit project: overrides hubs; the longest matching prefix wins.
+# `name` defaults to the directory basename.
+[[project]]
+path = "~/work/company-site"
+name = "site"
+tags = { client = "my-business", kind = "web" }
+
+[[project]]
+path = "~/work/infra"
+tags = { client = "my-business", kind = "tooling" }
+
+# Extra tags for subagents spawned by a skill (transcript `attributionSkill`).
+[skills]
+deep-research = { kind = "research" }

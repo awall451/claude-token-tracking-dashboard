@@ -11,7 +11,8 @@ Dashboard for tracking Claude Code token usage from local session data. Useful o
 - **Rolling windows** — 1h / 5h / 24h token usage with color-coded gauges (5h = Anthropic's reset window)
 - **Burn rate** — tokens/hour with projection of when the 5h window fills
 - **Caveman vs normal** — avg tokens/turn comparison for the [caveman plugin](https://github.com/JuliusBrussee/caveman). Auto-detects plugin install, breaks down by mode (lite/full/ultra/wenyan), and shows daily adoption trend. Onboarding callout if plugin not installed.
-- **By day / by project** — usage breakdown over time
+- **By day / by project** — usage breakdown over time; projects attributed **per turn** from the files each tool call touches, so one session working across several repos splits correctly
+- **Tags** — group usage by `client`, `kind`, or any tag you define (see [Project attribution](#project-attribution))
 - **Model breakdown** — Sonnet vs Opus vs Haiku split
 - **Cache efficiency** — reads vs writes vs fresh input
 
@@ -59,6 +60,27 @@ python3 -m http.server 9420
 # open http://localhost:9420/frontend/
 ```
 
+## Project attribution
+
+By default every turn counts toward the directory Claude Code was launched in. To split usage when you work across several repos from one directory (a "hub"), create `~/.config/claude-token-tracker/tags.toml` — start from [`tags.example.toml`](tags.example.toml):
+
+```toml
+[[hub]]                 # ~/work/api/... → project "api"
+path = "~/work"
+tags = { client = "my-business" }
+
+[[project]]             # explicit; longest prefix wins
+path = "~/work/company-site"
+name = "site"
+tags = { kind = "web" }
+```
+
+Each turn is matched on the paths its tool calls touch (Edit/Write/Read, `cd` in Bash) and smoothed per user prompt; prompts with no file activity inherit the previous project. Subagents inherit their parent's project at spawn time.
+
+**Manual override:** copy [`extras/commands/tag.md`](extras/commands/tag.md) to `~/.claude/commands/` and run `/tag <project>` in a session — everything after it counts toward that project (and picks up its tags if it's in `tags.toml`).
+
+The Docker setup mounts `~/.config/claude-token-tracker` read-only and passes `HOME_DIR` so `~` resolves to your host home.
+
 ## Soft limit
 
 Dashboard has a configurable soft limit input (default: auto-calibrated from historical peak 5h window + 10% headroom). Gauges go green → orange → red as you approach it.
@@ -67,4 +89,4 @@ Anthropic doesn't expose actual quota. If you hit a real rate limit, note the 5h
 
 ## Requirements
 
-Python 3.10+, no dependencies. Docker for containerized deployment. Chart.js loaded from CDN.
+Python 3.11+ (stdlib `tomllib`), no dependencies. Docker for containerized deployment. Chart.js loaded from CDN.

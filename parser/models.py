@@ -1,7 +1,9 @@
-from dataclasses import dataclass, field
-from collections import defaultdict
-from datetime import datetime, timezone
 import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+_INTERNAL_TURN_KEYS = {"paths", "cwd", "exchange", "tag"}
 
 
 @dataclass
@@ -33,6 +35,7 @@ class SessionStats:
     is_subagent: bool = False
     parent_session_id: str = ""
     agent_type: str = ""
+    attribution_skill: str = ""  # skill that spawned a subagent (entry attributionSkill)
     # Claude Code's own cumulative accounting ("cost-state" entries): API-equivalent USD and
     # per-model usage, including side calls (titles, classifiers) absent from the transcript.
     cost_states: dict = field(default_factory=dict, repr=False)  # {sessionId: raw entry}
@@ -58,6 +61,14 @@ class SessionStats:
     def avg_tokens_per_turn(self):
         return round(self.total_cost_tokens / self.turns, 1) if self.turns > 0 else 0.0
 
+    def projects_breakdown(self) -> dict:
+        """Cost tokens per attributed project (empty until attribution runs)."""
+        out: dict = {}
+        for t in self.turns_raw:
+            if "project" in t:
+                out[t["project"]] = out.get(t["project"], 0) + t["cost"]
+        return out
+
     def to_dict(self):
         return {
             "session_id": self.session_id,
@@ -77,7 +88,9 @@ class SessionStats:
             "models": dict(self.models),
             "start_ts": self.start_ts,
             "end_ts": self.end_ts,
-            "turns_raw": self.turns_raw,
+            "turns_raw": [{k: v for k, v in t.items() if k not in _INTERNAL_TURN_KEYS}
+                          for t in self.turns_raw],
+            "projects": self.projects_breakdown(),
             "cache_creation_5m_tokens": self.cache_creation_5m_tokens,
             "cache_creation_1h_tokens": self.cache_creation_1h_tokens,
             "thinking_tokens": self.thinking_tokens,
@@ -91,7 +104,7 @@ class SessionStats:
 
 
 def _utc_day(ts_ms: int) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(ts_ms / 1000, tz=UTC).strftime("%Y-%m-%d")
 
 
 def aggregate_by_day(sessions: list[SessionStats]) -> dict:
@@ -164,6 +177,55 @@ def aggregate_by_project(sessions: list[SessionStats]) -> dict:
         if s.caveman:
             p["caveman_sessions"] += 1
     return dict(by_proj)
+
+
+def _empty_totals():
+    return {
+        "input_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "total_cost_tokens": 0,
+        "turns": 0,
+        "sessions": 0,
+    }
+
+
+def _add_turn(d: dict, t: dict):
+    d["input_tokens"] += t["input"]
+    d["cache_creation_tokens"] += t["cache_creation"]
+    d["cache_read_tokens"] += t["cache_read"]
+    d["output_tokens"] += t["output"]
+    d["total_cost_tokens"] += t["cost"]
+    d["turns"] += 1
+
+
+def aggregate_by_turn_project(sessions: list[SessionStats]) -> dict:
+    """Totals per attributed project, summed per turn. `sessions` = distinct sessions touching it."""
+    by_proj = defaultdict(_empty_totals)
+    for s in sessions:
+        seen = set()
+        for t in s.turns_raw:
+            name = t.get("project") or s.project_path or "unknown"
+            _add_turn(by_proj[name], t)
+            if name not in seen:
+                seen.add(name)
+                by_proj[name]["sessions"] += 1
+    return dict(by_proj)
+
+
+def aggregate_by_tag(sessions: list[SessionStats]) -> dict:
+    """{tag_key: {tag_value: totals}} from per-turn tags."""
+    by_tag: dict = defaultdict(lambda: defaultdict(_empty_totals))
+    for s in sessions:
+        seen = set()
+        for t in s.turns_raw:
+            for key, value in (t.get("tags") or {}).items():
+                _add_turn(by_tag[key][value], t)
+                if (key, value) not in seen:
+                    seen.add((key, value))
+                    by_tag[key][value]["sessions"] += 1
+    return {k: dict(v) for k, v in by_tag.items()}
 
 
 def caveman_comparison(sessions: list[SessionStats]) -> dict:
