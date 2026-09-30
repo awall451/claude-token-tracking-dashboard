@@ -86,11 +86,27 @@ The Docker setup mounts `~/.config/claude-token-tracker` read-only and passes `H
 
 No AI provider publishes energy per token, so the dashboard estimates it from token counts using coefficients in [`parser/energy.toml`](parser/energy.toml): Wh per million tokens for fresh input, cache writes, cache reads and output, scaled per model family, then converted to on-site cooling water and CO₂e at a configurable grid intensity. Every coefficient cites its source; the range spans Epoch AI's short-context figures (low) to Simon Couch's deliberately pessimistic Claude rates (high). Treat the numbers as order-of-magnitude, and override them with `ENERGY_CONFIG=/path/to/your.toml` if you have better data.
 
+## Real quota (Pro/Max)
+
+Claude Code passes your real 5-hour and weekly usage % to the statusline command (`rate_limits` in its stdin JSON). [`extras/statusline-tee.sh`](extras/statusline-tee.sh) logs a snapshot of those fields (at most once a minute) to `~/.claude/token-tracker/quota.jsonl` and then runs your existing statusline unchanged:
+
+```bash
+mkdir -p ~/.claude/token-tracker
+cp extras/statusline-tee.sh ~/.claude/token-tracker/
+```
+
+```jsonc
+// ~/.claude/settings.json
+"statusLine": { "type": "command", "command": "~/.claude/token-tracker/statusline-tee.sh ccstatusline" }
+```
+
+(Replace `ccstatusline` with whatever command you use now, or omit it.) The dashboard then shows true 5h/weekly %, reset countdowns, and a **measured** soft limit: cost tokens seen in the current 5-hour window ÷ used %. Requires `jq`.
+
 ## Soft limit
 
 Dashboard has a configurable soft limit input (default: auto-calibrated from historical peak 5h window + 10% headroom). Gauges go green → orange → red as you approach it.
 
-Anthropic doesn't expose actual quota. If you hit a real rate limit, note the 5h token count shown at that moment and set it as your limit.
+Without the statusline wrapper, the dashboard can't see your real quota. If you hit a real rate limit, note the 5h token count shown at that moment and set it as your limit — or set up [Real quota](#real-quota-promax).
 
 ## Requirements
 

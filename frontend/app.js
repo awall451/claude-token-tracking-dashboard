@@ -421,6 +421,36 @@ function renderByProject(data) {
   draw();
 }
 
+// --- Real quota (statusline snapshots) ---------------------------------------
+
+function fmtIn(seconds) {
+  if (seconds <= 0) return 'now';
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function renderQuota(q) {
+  const el = document.getElementById('quota-strip');
+  el.hidden = false;
+  if (!q || (!q.five_hour && !q.seven_day)) {
+    el.innerHTML = `<strong>Want real quota numbers?</strong> On Pro/Max, Claude Code gives the statusline your
+      actual 5-hour and weekly usage %. Wrap your statusline with <code>extras/statusline-tee.sh</code>
+      (see README) and they'll show here, and the soft limit gets measured instead of guessed.`;
+    return;
+  }
+  const now = Date.now() / 1000;
+  const part = (label, w) => w ? `
+      <span title="${esc(`Captured ${fmtDate(w.captured_at * 1000)} · ${fmt(w.window_cost_tokens)} cost tokens seen in this window`)}">
+        ${label}: <strong>${w.used_percentage.toFixed(0)}%</strong> used · resets in ${fmtIn(w.resets_at - now)}
+      </span>` : '';
+  const stale = q.age_seconds > 3600
+    ? ` <span title="No statusline refresh recently — numbers may be out of date">(as of ${fmtIn(q.age_seconds)} ago)</span>`
+    : '';
+  el.innerHTML = `<strong>Real quota</strong> (from Claude Code's statusline)${stale}: &nbsp;
+    ${part('5-hour', q.five_hour)} &nbsp;|&nbsp; ${part('weekly', q.seven_day)}`;
+}
+
 // --- Environmental impact ---------------------------------------------------
 
 function fmtWh(wh) {
@@ -932,8 +962,21 @@ async function main() {
   const planInfo = data.plan_info || {};
   const planLimits = planInfo.limits || { standard: 600000, ultraplan_5x: 3000000, ultraplan_20x: 12000000 };
 
+  // Measured limit from statusline quota snapshots beats any plan guess
+  const implied5h = data.quota?.five_hour?.implied_limit_cost_tokens;
+  if (implied5h) {
+    planLimits.statusline = implied5h;
+    const opt = document.createElement('option');
+    opt.value = 'statusline';
+    opt.textContent = `Measured (~${fmt(implied5h)})`;
+    opt.title = 'Implied from real 5h quota % captured by extras/statusline-tee.sh';
+    planSelect.prepend(opt);
+  }
+
   // Auto-select plan from detected tier
-  if (planInfo.detected) {
+  if (implied5h) {
+    planSelect.value = 'statusline';
+  } else if (planInfo.detected) {
     planSelect.value = planInfo.ultraplan ? 'ultraplan_5x' : 'standard';
   } else {
     planSelect.value = 'custom';
@@ -960,6 +1003,7 @@ async function main() {
     renderRolling(data.rolling, getSoftLimit());
   }
 
+  renderQuota(data.quota);
   renderCards(data.totals, data.lifetime);
   renderLifetime(data.lifetime);
   renderRolling(data.rolling, getSoftLimit());
