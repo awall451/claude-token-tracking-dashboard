@@ -421,6 +421,70 @@ function renderByProject(data) {
   draw();
 }
 
+// --- Environmental impact ---------------------------------------------------
+
+function fmtWh(wh) {
+  if (wh >= 1000) return (wh / 1000).toFixed(wh >= 10000 ? 1 : 2) + ' kWh';
+  return wh.toFixed(wh >= 10 ? 0 : 1) + ' Wh';
+}
+function fmtMl(ml) { return ml >= 1000 ? (ml / 1000).toFixed(1) + ' L' : Math.round(ml) + ' mL'; }
+function fmtG(g) { return g >= 1000 ? (g / 1000).toFixed(1) + ' kg' : Math.round(g) + ' g'; }
+function fmtRange(tri, f) { return `${f(tri[0])} – ${f(tri[2])}`; }
+
+// Everyday equivalents for a central Wh figure. 1 kW microwave; 10 W LED bulb;
+// ~20 Wh per phone charge (assumption, see research notes).
+function whEquivalent(wh) {
+  const microwaveMin = wh / 1000 * 60;
+  if (microwaveMin < 90) return `≈ ${microwaveMin < 1 ? '<1' : Math.round(microwaveMin)} min of a microwave`;
+  return `≈ ${Math.round(wh / 10).toLocaleString()} LED-bulb hours`;
+}
+
+function renderImpact(impact) {
+  const panel = document.getElementById('impact-panel');
+  if (!impact) { panel.hidden = true; return; }
+  const a = impact.assumptions || {};
+  const t = impact.total, m = impact.last_30d;
+
+  document.getElementById('impact-callout').innerHTML = `
+    <strong>These are estimates, not measurements.</strong> No AI provider publishes energy per token, so every
+    figure is back-derived from third-party studies (Epoch AI, Simon Couch, Zeke Hausfather) and the real value can
+    fall outside the range. Carbon uses ${a.grid_gco2_per_kwh} gCO₂e/kWh (≈ US-average grid); water counts on-site
+    cooling only (${a.water_onsite_ml_per_wh} mL/Wh) — water evaporated at power plants adds roughly 2–12× more.
+    Cache reads are included: they are cheap per token but, at agentic volumes, most of the energy.`;
+
+  const cells = [
+    { label: 'Energy (all time)', value: fmtWh(t.wh[1]), sub: fmtRange(t.wh, fmtWh), title: whEquivalent(t.wh[1]) },
+    { label: 'Water, on-site',    value: fmtMl(t.water_ml[1]), sub: fmtRange(t.water_ml, fmtMl), title: 'Data-center cooling water only' },
+    { label: 'Carbon',            value: fmtG(t.gco2[1]) + ' CO₂e', sub: fmtRange(t.gco2, fmtG), title: `At ${a.grid_gco2_per_kwh} g/kWh` },
+    { label: 'Energy, last 30d',  value: fmtWh(m.wh[1]), sub: fmtRange(m.wh, fmtWh), title: 'Most recent 30 days with activity' },
+    { label: 'Equivalent',        value: whEquivalent(t.wh[1]).replace('≈ ', ''), sub: 'central estimate, all time' },
+  ];
+  document.getElementById('impact-grid').innerHTML = cells.map(c => `
+    <div class="stat-cell"${c.title ? ` title="${esc(c.title)}"` : ''}>
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+      ${c.sub ? `<div class="sub">${c.sub}</div>` : ''}
+    </div>
+  `).join('');
+
+  const rows = Object.entries(impact.by_project || {})
+    .sort((x, y) => y[1].wh[1] - x[1].wh[1])
+    .slice(0, 12);
+  document.getElementById('impact-table-wrap').innerHTML = `
+    <table class="sessions-table">
+      <thead><tr><th>Project</th><th>Energy</th><th>Water</th><th>Carbon</th><th>Roughly</th></tr></thead>
+      <tbody>${rows.map(([name, v]) => `
+        <tr title="${esc(`${name}\nEnergy ${fmtRange(v.wh, fmtWh)} · Water ${fmtRange(v.water_ml, fmtMl)} · Carbon ${fmtRange(v.gco2, fmtG)}`)}">
+          <td>${esc(shortProject(name))}</td>
+          <td>${fmtWh(v.wh[1])}</td>
+          <td>${fmtMl(v.water_ml[1])}</td>
+          <td>${fmtG(v.gco2[1])}</td>
+          <td>${whEquivalent(v.wh[1])}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
 function renderModels(sessions) {
   const modelCounts = {};
   for (const s of sessions) {
@@ -913,6 +977,7 @@ async function main() {
   renderCavemanAdoption(data.by_day);
   renderDaily(data.by_day, data.lifetime && data.lifetime.rolling_7d_average);
   renderByProject(data);
+  renderImpact(data.impact);
   renderModels(data.sessions);
   renderCache(data.totals);
   renderSessionsTable([...data.sessions].reverse()); // newest first default

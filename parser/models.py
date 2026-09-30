@@ -6,6 +6,14 @@ from datetime import UTC, datetime
 _INTERNAL_TURN_KEYS = {"paths", "cwd", "exchange", "tag"}
 
 
+def _add_wh(acc: list, turn: dict) -> None:
+    """Accumulate a turn's [low, central, high] Wh estimate (set by energy.annotate_sessions)."""
+    wh = turn.get("wh")
+    if wh:
+        for i in range(3):
+            acc[i] += wh[i]
+
+
 @dataclass
 class SessionStats:
     session_id: str
@@ -61,6 +69,13 @@ class SessionStats:
     def avg_tokens_per_turn(self):
         return round(self.total_cost_tokens / self.turns, 1) if self.turns > 0 else 0.0
 
+    @property
+    def wh(self) -> list:
+        acc = [0.0, 0.0, 0.0]
+        for t in self.turns_raw:
+            _add_wh(acc, t)
+        return [round(x, 3) for x in acc]
+
     def projects_breakdown(self) -> dict:
         """Cost tokens per attributed project (empty until attribution runs)."""
         out: dict = {}
@@ -91,6 +106,7 @@ class SessionStats:
             "turns_raw": [{k: v for k, v in t.items() if k not in _INTERNAL_TURN_KEYS}
                           for t in self.turns_raw],
             "projects": self.projects_breakdown(),
+            "wh": self.wh,
             "cache_creation_5m_tokens": self.cache_creation_5m_tokens,
             "cache_creation_1h_tokens": self.cache_creation_1h_tokens,
             "thinking_tokens": self.thinking_tokens,
@@ -123,6 +139,7 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
         "sessions": 0,
         "caveman_sessions": 0,
         "normal_sessions": 0,
+        "wh": [0.0, 0.0, 0.0],
     })
     for s in sessions:
         if not s.start_ts:
@@ -151,6 +168,7 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
             td["output_tokens"] += t["output"]
             td["total_cost_tokens"] += t["cost"]
             td["turns"] += 1
+            _add_wh(td["wh"], t)
     return dict(sorted(by_day.items()))
 
 
@@ -164,9 +182,12 @@ def aggregate_by_project(sessions: list[SessionStats]) -> dict:
         "turns": 0,
         "sessions": 0,
         "caveman_sessions": 0,
+        "wh": [0.0, 0.0, 0.0],
     })
     for s in sessions:
         p = by_proj[s.project_path or "unknown"]
+        for t in s.turns_raw:
+            _add_wh(p["wh"], t)
         p["input_tokens"] += s.input_tokens
         p["cache_creation_tokens"] += s.cache_creation_tokens
         p["cache_read_tokens"] += s.cache_read_tokens
@@ -188,6 +209,7 @@ def _empty_totals():
         "total_cost_tokens": 0,
         "turns": 0,
         "sessions": 0,
+        "wh": [0.0, 0.0, 0.0],
     }
 
 
@@ -198,6 +220,7 @@ def _add_turn(d: dict, t: dict):
     d["output_tokens"] += t["output"]
     d["total_cost_tokens"] += t["cost"]
     d["turns"] += 1
+    _add_wh(d["wh"], t)
 
 
 def aggregate_by_turn_project(sessions: list[SessionStats]) -> dict:
