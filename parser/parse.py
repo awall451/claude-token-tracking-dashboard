@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import difflib
 import json
 import os
 import pathlib
@@ -27,6 +28,7 @@ try:
         aggregate_by_turn_project,
         caveman_comparison,
         lifetime_stats,
+        recompute_totals,
         rolling_windows,
     )
 except ImportError:  # run as a script / imported via sys.path (server/serve.py)
@@ -41,6 +43,7 @@ except ImportError:  # run as a script / imported via sys.path (server/serve.py)
         aggregate_by_turn_project,
         caveman_comparison,
         lifetime_stats,
+        recompute_totals,
         rolling_windows,
     )
 
@@ -147,6 +150,31 @@ def _text_content(message: dict) -> str:
                 parts.append(block.get("text", ""))
         return "\n".join(parts)
     return ""
+
+
+def _tool_stats(blocks: list) -> tuple[int, int, int]:
+    """(tool calls, lines added, lines removed) for one assistant entry's tool_use blocks.
+
+    Edit: line diff of old_string → new_string; Write: every content line counts as added
+    (overwrites of existing files are over-counted — no before-image in the transcript).
+    """
+    calls = added = removed = 0
+    for b in blocks:
+        if not isinstance(b, dict) or b.get("type") != "tool_use":
+            continue
+        calls += 1
+        inp = b.get("input") or {}
+        if b.get("name") == "Edit":
+            old = str(inp.get("old_string", "")).splitlines()
+            new = str(inp.get("new_string", "")).splitlines()
+            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+                if tag in ("replace", "delete"):
+                    removed += i2 - i1
+                if tag in ("replace", "insert"):
+                    added += j2 - j1
+        elif b.get("name") == "Write":
+            added += len(str(inp.get("content", "")).splitlines())
+    return calls, added, removed
 
 
 def _to_ms(ts) -> int:
@@ -258,53 +286,57 @@ def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
             key = obj.get("requestId") or obj.get("uuid") or f"line{len(requests)}"
             content = msg.get("content") if isinstance(msg.get("content"), list) else []
             paths = extract_paths(content, cwd=obj.get("cwd", ""))
+            calls, added, removed = _tool_stats(content)
             req = requests.get(key)
             if req is None:
                 tag = pending_tag[1] if pending_tag and pending_tag[0] == exchange else None
                 requests[key] = {"ts": ts, "msg": msg, "paths": paths, "exchange": max(exchange, 0),
-                                 "tag": tag, "cwd": obj.get("cwd", "")}
+                                 "tag": tag, "cwd": obj.get("cwd", ""), "rid": key,
+                                 "tool_calls": calls, "lines_added": added, "lines_removed": removed}
             else:
                 req["paths"].extend(paths)
+                req["tool_calls"] += calls
+                req["lines_added"] += added
+                req["lines_removed"] += removed
                 if msg["usage"].get("output_tokens", 0) >= req["msg"]["usage"].get("output_tokens", 0):
                     req["msg"] = msg
 
     for req in sorted(requests.values(), key=lambda r: r["ts"]):
-        ts, msg = req["ts"], req["msg"]
+        msg = req["msg"]
         usage = msg["usage"]
         inp = usage.get("input_tokens", 0)
         cc = usage.get("cache_creation_input_tokens", 0)
-        cr = usage.get("cache_read_input_tokens", 0)
         out = usage.get("output_tokens", 0)
         model = msg.get("model", "unknown")
-        iter_models = [i.get("model") for i in usage.get("iterations") or [] if i.get("model")]
-        for m in iter_models or [model]:
-            stats.models[m] += 1
-        stats.turns += 1
-        stats.input_tokens += inp
-        stats.cache_creation_tokens += cc
-        stats.cache_read_tokens += cr
-        stats.output_tokens += out
         cc_detail = usage.get("cache_creation") or {}
-        stats.cache_creation_5m_tokens += cc_detail.get("ephemeral_5m_input_tokens", 0)
-        stats.cache_creation_1h_tokens += cc_detail.get("ephemeral_1h_input_tokens", 0)
-        stats.thinking_tokens += (usage.get("output_tokens_details") or {}).get("thinking_tokens", 0)
         stu = usage.get("server_tool_use") or {}
-        stats.web_search_requests += stu.get("web_search_requests", 0)
-        stats.web_fetch_requests += stu.get("web_fetch_requests", 0)
         stats.turns_raw.append({
-            "ts": ts,
+            "rid": req["rid"],
+            "ts": req["ts"],
             "model": model,
+            "models": [i.get("model") for i in usage.get("iterations") or [] if i.get("model")] or [model],
             "input": inp,
             "cache_creation": cc,
-            "cache_read": cr,
+            "cache_write_5m": cc_detail.get("ephemeral_5m_input_tokens", 0),
+            "cache_write_1h": cc_detail.get("ephemeral_1h_input_tokens", 0),
+            "cache_read": usage.get("cache_read_input_tokens", 0),
             "output": out,
+            "thinking": (usage.get("output_tokens_details") or {}).get("thinking_tokens", 0),
+            "web_search": stu.get("web_search_requests", 0),
+            "web_fetch": stu.get("web_fetch_requests", 0),
             "cost": inp + cc + out,
+            "tool_calls": req["tool_calls"],
+            "lines_added": req["lines_added"],
+            "lines_removed": req["lines_removed"],
+            "source": "transcript",
+            "estimated": False,
             # attribution inputs; stripped from to_dict()
             "exchange": req["exchange"],
             "paths": req["paths"],
             "tag": req["tag"],
             "cwd": req["cwd"],
         })
+    recompute_totals(stats)
 
     if stats.turns == 0 and not stats.cost_states:
         return None
@@ -358,18 +390,36 @@ def _read_agent_meta(jsonl_file: pathlib.Path) -> dict:
         return {}
 
 
-def parse_all(projects_dir: pathlib.Path | None = None,
+def _discover(roots: list[pathlib.Path]):
+    """Yield (project_dir_name, jsonl_file, parent_id). A session present under several roots
+    (live ~/.claude/projects + an archive copy) is read from the first root only."""
+    seen = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for project_dir in sorted(root.iterdir()):
+            if not project_dir.is_dir():
+                continue
+            for jsonl_file, parent_id in _session_files(project_dir):
+                key = (project_dir.name, str(jsonl_file.relative_to(project_dir)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield project_dir.name, jsonl_file, parent_id
+
+
+def parse_all(projects_dir: pathlib.Path | list[pathlib.Path] | None = None,
               history_map: dict[str, str] | None = None,
               name_map: dict[str, str] | None = None,
               cache: dict | None = None) -> list[SessionStats]:
-    """Parse every session + subagent transcript.
+    """Parse every session + subagent transcript under one or more roots.
 
     `cache` (optional, caller-owned dict) reuses results for files whose mtime/size
     are unchanged — the long-running server passes one to make refreshes cheap.
     """
-    projects_dir = projects_dir or PROJECTS_DIR
-    if not projects_dir.exists():
-        print(f"ERROR: {projects_dir} not found", file=sys.stderr)
+    roots = projects_dir if isinstance(projects_dir, list) else [projects_dir or PROJECTS_DIR]
+    if not any(r.exists() for r in roots):
+        print(f"ERROR: none of {roots} found", file=sys.stderr)
         sys.exit(1)
 
     if history_map is None or name_map is None:
@@ -379,31 +429,28 @@ def parse_all(projects_dir: pathlib.Path | None = None,
 
     sessions = []
     cost_states: dict[str, dict] = {}
-    for project_dir in sorted(projects_dir.iterdir()):
-        if not project_dir.is_dir():
+    for dir_name, jsonl_file, parent_id in _discover(roots):
+        fallback_path = decode_project_path(dir_name)
+        stats = _parse_cached(jsonl_file, cache)
+        if stats is None:
             continue
-        fallback_path = decode_project_path(project_dir.name)
-        for jsonl_file, parent_id in _session_files(project_dir):
-            stats = _parse_cached(jsonl_file, cache)
-            if stats is None:
-                continue
-            for sid, cs in stats.cost_states.items():
-                prev = cost_states.get(sid)
-                if prev is None or cs.get("totalCostUSD", 0) >= prev.get("totalCostUSD", 0):
-                    cost_states[sid] = cs
-            if stats.turns == 0:
-                continue  # metadata-only file (e.g. *.orphaned-*.jsonl)
-            if parent_id:
-                meta = _read_agent_meta(jsonl_file)
-                stats.is_subagent = True
-                stats.parent_session_id = parent_id
-                stats.agent_type = meta.get("agentType", "")
-                stats.session_name = stats.custom_title or meta.get("description", "")
-                stats.project_path = history_map.get(parent_id) or stats.cwd or fallback_path
-            else:
-                stats.session_name = stats.custom_title or name_map.get(stats.session_id, "")
-                stats.project_path = history_map.get(stats.session_id) or stats.cwd or fallback_path
-            sessions.append(stats)
+        for sid, cs in stats.cost_states.items():
+            prev = cost_states.get(sid)
+            if prev is None or cs.get("totalCostUSD", 0) >= prev.get("totalCostUSD", 0):
+                cost_states[sid] = cs
+        if stats.turns == 0:
+            continue  # metadata-only file (e.g. *.orphaned-*.jsonl)
+        if parent_id:
+            meta = _read_agent_meta(jsonl_file)
+            stats.is_subagent = True
+            stats.parent_session_id = parent_id
+            stats.agent_type = meta.get("agentType", "")
+            stats.session_name = stats.custom_title or meta.get("description", "")
+            stats.project_path = history_map.get(parent_id) or stats.cwd or fallback_path
+        else:
+            stats.session_name = stats.custom_title or name_map.get(stats.session_id, "")
+            stats.project_path = history_map.get(stats.session_id) or stats.cwd or fallback_path
+        sessions.append(stats)
 
     for stats in sessions:
         cs = None if stats.is_subagent else cost_states.get(stats.session_id)
@@ -541,9 +588,20 @@ def main():
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
     parser.add_argument("--summary", action="store_true", help="Print summary to stdout")
     parser.add_argument("--anonymize", action="store_true", help="Replace project paths with generic labels")
+    parser.add_argument("--ledger", help="SQLite ledger to upsert into and build from (keeps history past transcript cleanup)")
+    parser.add_argument("--archive", action="append", default=[], help="Extra transcript root (repeatable)")
     args = parser.parse_args()
 
-    sessions = parse_all()
+    roots = [PROJECTS_DIR, *(pathlib.Path(a) for a in args.archive)]
+    sessions = parse_all(projects_dir=roots)
+    if args.ledger:
+        try:
+            from . import ledger
+        except ImportError:
+            import ledger
+        db = ledger.connect(pathlib.Path(args.ledger))
+        ledger.ingest(db, sessions)
+        sessions = ledger.load_sessions(db)
     output = build_output(sessions)
     if args.anonymize:
         output = anonymize_output(output)

@@ -23,23 +23,32 @@ from urllib.parse import urlparse
 
 # Ensure parser/ is importable
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "parser"))
+import ledger as ledger_mod
 import parse as parser_mod
 
 PORT = int(os.environ.get("PORT", 9420))
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", 300))
 STATS_PATH = pathlib.Path(os.environ.get("STATS_PATH", "/data/stats.json"))
 FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
+# Extra transcript roots (e.g. an archive copy of ~/.claude/projects), comma-separated
+ARCHIVE_DIRS = [pathlib.Path(p) for p in os.environ.get("ARCHIVE_DIRS", "").split(",") if p]
 
 _stats_lock = threading.Lock()
 _last_refreshed: float = 0.0
 # Per-file parse results keyed by mtime/size; unchanged transcripts are not re-read.
 _parse_cache: dict = {}
+_ledger = None
 
 
 def refresh_stats() -> bool:
     global _last_refreshed
     try:
-        sessions = parser_mod.parse_all(cache=_parse_cache)
+        global _ledger
+        if _ledger is None:
+            _ledger = ledger_mod.connect(ledger_mod.LEDGER_PATH)
+        roots = [parser_mod.PROJECTS_DIR, *ARCHIVE_DIRS]
+        ledger_mod.ingest(_ledger, parser_mod.parse_all(projects_dir=roots, cache=_parse_cache))
+        sessions = ledger_mod.load_sessions(_ledger)   # durable history, not just what's on disk
         output = parser_mod.build_output(sessions)
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = STATS_PATH.with_suffix(".tmp")

@@ -8,11 +8,20 @@ services:
       - ~/.claude.json:/data/.claude.json:ro
       - ./frontend:/app/frontend:ro
       - ~/.config/claude-token-tracker:/data/config:ro
+      # Optional archive of older transcripts (see README "History"); ingested alongside ~/.claude/projects
+      - ~/.local/share/claude-token-tracker/transcript-archive/projects:/data/archive:ro
+      # Durable ledger + generated stats (survives rebuilds and Claude Code's transcript cleanup)
+      - tracker-data:/data/state
     environment:
       CLAUDE_DIR: /data/.claude
-      STATS_PATH: /data/stats.json
+      STATS_PATH: /data/state/stats.json
+      LEDGER_PATH: /data/state/ledger.sqlite
+      ARCHIVE_DIRS: /data/archive
       TAGS_CONFIG: /data/config/tags.toml
       HOME_DIR: ${HOME}   # host home: `~` in tags.toml and transcripts
       REFRESH_INTERVAL: 60   # seconds between auto-refresh
       PORT: 9420
     restart: unless-stopped
+
+volumes:
+  tracker-data:
