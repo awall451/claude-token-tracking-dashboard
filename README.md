@@ -1,12 +1,13 @@
 # Claude Token Tracker
 
-Dashboard for tracking Claude Code token usage from local session data. Useful if you're on the $20/mo Claude Max plan and want visibility into how much you're consuming and when.
+Dashboard for tracking Claude Code token usage from local session data. Useful on a Claude Pro or Max subscription when you want visibility into how much you're consuming and when.
 
 ![Dashboard screenshot](docs/screenshot.png)
 
 ## What it tracks
 
-- **Total usage** — sessions, turns, cost tokens, cache hit rate
+- **Total usage** — sessions, turns, cost tokens, cache hit rate, subagent transcripts included
+- **API-equivalent cost** — Claude Code's own `cost-state` tally per session (USD at API list prices, not your subscription bill), including side calls the transcripts don't log
 - **Rolling windows** — 1h / 5h / 24h token usage with color-coded gauges (5h = Anthropic's reset window)
 - **Burn rate** — tokens/hour with projection of when the 5h window fills
 - **Caveman vs normal** — avg tokens/turn comparison for the [caveman plugin](https://github.com/JuliusBrussee/caveman). Auto-detects plugin install, breaks down by mode (lite/full/ultra/wenyan), and shows daily adoption trend. Onboarding callout if plugin not installed.
@@ -16,7 +17,9 @@ Dashboard for tracking Claude Code token usage from local session data. Useful i
 
 ## How it works
 
-Reads `~/.claude/projects/*/` — the JSONL session files Claude Code writes locally. No API calls, no external services. All data stays local.
+Reads `~/.claude/projects/*/` — the JSONL session files Claude Code writes locally, plus subagent transcripts under `<session>/subagents/`. No API calls, no external services. All data stays local.
+
+> **Privacy:** the container mounts `~/.claude` (your full prompt history and transcripts). `docker-compose.yml` publishes the port on `127.0.0.1` only. Don't change that to `0.0.0.0` — anyone on your LAN or tailnet could then browse the dashboard.
 
 ## Quick start (Docker)
 

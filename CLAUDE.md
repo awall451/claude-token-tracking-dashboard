@@ -42,14 +42,18 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 
 ## Data Source Details
 
-**Path pattern:** `~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl`
+**Path pattern:** `~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl`. Subagent transcripts live at `<encoded-project-path>/<session-uuid>/subagents/agent-<id>.jsonl` with a sibling `agent-<id>.meta.json` (`agentType`, `description`); they are parsed as their own `SessionStats` with `is_subagent`/`parent_session_id`. `*.orphaned-*.jsonl` files are metadata-only copies (no assistant turns) — only their `cost-state` entries are used.
 
-Encoded project path replaces leading `/` with `-` (e.g. `/home/dillon/lab/foo` → `-home-dillon-lab-foo`). `~/.claude/history.jsonl` maps `sessionId → project_path` with a more reliable path string — the parser prefers this over decoding directory names.
+Encoded project path replaces every `/` (and `.`) with `-` (e.g. `/home/dillon/lab/foo` → `-home-dillon-lab-foo`). `~/.claude/history.jsonl` maps `sessionId → project_path` with a more reliable path string — the parser prefers this over decoding directory names.
 
 **Effective token cost** = `input_tokens + cache_creation_input_tokens + output_tokens`  
 Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheaper per-token but still consume quota.
 
-**Duplicate entries:** Streaming causes multiple assistant entries per request. Always deduplicate by `requestId` before summing usage.
+**Duplicate entries:** Streaming causes multiple assistant entries per request. Always deduplicate by `requestId` before summing usage, keeping the entry with the **largest `output_tokens`** — subagent transcripts log partial usage on early chunks (first-chunk dedup undercounts output ~100×).
+
+**`cost-state` entries:** Claude Code writes cumulative per-session accounting (`totalCostUSD`, per-model `modelUsage`, lines added/removed). Multiple copies may exist (main file + orphaned files); take the one with the largest `totalCostUSD` per `sessionId`. Exposed as `session.reported` and `totals.reported_*`. It includes side calls (e.g. Haiku) absent from transcripts, so it can exceed transcript-derived totals.
+
+**Plan detection:** `detect_plan()` reads the `tengu_ultraplan_config` GrowthBook flag, which appears to gate the Ultraplan feature rather than indicate Max tier — treat as unreliable.
 
 **Caveman detection:** Two paths — (1) scan `user` entries for `<command-name>/caveman` or `caveman:caveman` in `message.content`, (2) scan `attachment` entries (type `hook_success` / `hook_additional_context`) for `CAVEMAN MODE ACTIVE` (hook-injected sessions). Tag the entire session as caveman if any turn matches. Mode variant (lite/full/ultra/wenyan) extracted from `<command-args>` tag or hook `level: X` text.
 
@@ -72,22 +76,41 @@ When adding a new UI element, ask: *would a first-time user understand this with
 
 ## Remotes & Mirroring
 
-Two remotes must always stay in sync — treat them as mirrors:
+GitHub is the source of truth. CI and PR review live there. Gitea is a read-only mirror that auto-pulls from GitHub.
 
-| Remote | URL |
-|--------|-----|
-| `origin` | https://github.com/awall451/claude-token-tracking-dashboard |
-| `gitea` | git@git.projectorion.net:dillon/claude-token-tracking |
+| Remote | URL | Role |
+|--------|-----|------|
+| `origin` | https://github.com/awall451/claude-token-tracking-dashboard | Source of truth — open PRs here |
+| `gitea` | git@git.projectorion.net:dillon/claude-token-tracking | Pull-mirror of `origin/main` (configured in Gitea repo settings → Mirror Settings) |
 
-**Push rule:** always push to both in every session:
+**Push rule:** push feature branches only to `origin`. Open the PR there. After merge, the Gitea pull mirror catches up on its next interval. Do *not* dual-push or open Gitea PRs for new work — the mirror handles it.
+
 ```bash
-git push gitea <branch> && git push origin <branch>
+git push -u origin <branch>
+gh pr create --repo awall451/claude-token-tracking-dashboard --base main --head <branch>
 ```
 
-**PR rule:** create a PR in both repos for every feature branch:
-- GitHub: `gh pr create --repo awall451/claude-token-tracking-dashboard --base main --head <branch>`
-- Gitea: `curl -X POST https://git.projectorion.net/api/v1/repos/dillon/claude-token-tracking/pulls -H "Authorization: token $GITEA_TOKEN" ...`
-  - Requires `GITEA_TOKEN` env var (Gitea personal access token). If unset, provide the PR URL from `git push` output to the user and ask them to open it manually.
+If the Gitea mirror falls behind unexpectedly, force a one-shot sync from the Gitea UI (repo settings → Mirror Settings → Synchronize Now) rather than pushing manually.
+
+**Note on Gitea Actions:** Gitea ≥ v1.19 supports GitHub-Actions-compatible workflows via `act_runner`. The `.github/workflows/` files would run there too if needed. For now CI runs only on GitHub.
+
+## Continuous Integration & TDD
+
+CI is configured at `.github/workflows/ci.yml`. It runs `pytest` on every push to `main` and every pull request. Tests live in `tests/` and import from `parser/`. Pure-function modules (`parser/models.py`) are the highest-value test targets and have full coverage of aggregation helpers.
+
+**Local test loop:**
+```bash
+python3 -m venv .venv && .venv/bin/pip install -q pytest   # one-time
+.venv/bin/pytest                                           # run tests
+```
+
+**TDD workflow for new changes:**
+1. Open a GitHub Issue describing the bug or feature with reproduction / acceptance criteria.
+2. Branch from `main` (`<type>/<slug>`, e.g. `fix/<short-name>`).
+3. **Red:** add a failing test first, commit. CI fails.
+4. **Green:** make the smallest change that turns the test green, commit.
+5. **Refactor:** clean up while CI stays green.
+6. Open a PR referencing the issue (`Fixes #N`). Merge once CI is green.
 
 ## Permissions & Workflow
 
@@ -96,16 +119,16 @@ For any task in this project:
 2. After edits, deploy to local Docker: `docker compose build --no-cache --pull=false && docker compose up -d`
 3. Validate via `curl http://localhost:9420/api/status` and spot-check `stats.json`
 4. If broken, diagnose and fix, repeat until working
-5. Push to both remotes and create PRs in both (see Remotes & Mirroring above)
+5. Push the branch to `origin` and open a GitHub PR (see Remotes & Mirroring above). Do not dual-push.
 6. After completion, suggest further improvements if any
 
 ## TODO
 
-- Update README with community-sourced soft limit estimates per plan (empirically, $20 Max plan hits ~600K tokens/5h window; 5x Max ~3M; 20x Max ~12M). Note these are single-user data points, not Anthropic-confirmed values. Invite contributors to share their limit observations.
+- Update README with community-sourced soft limit estimates per plan (empirically, Pro plan hits ~600K tokens/5h window; 5x Max ~3M; 20x Max ~12M). Note these are single-user data points, not Anthropic-confirmed values. Invite contributors to share their limit observations.
 
 ## Key Invariants
 
 - `stats.json` is gitignored — always generated locally, never committed.
-- No external dependencies: Python 3.10+ stdlib only. Chart.js loaded from CDN.
+- Runtime code (`parser/`, `server/`) uses Python 3.10+ stdlib only. Chart.js loaded from CDN. `pytest` is a dev-only dependency for tests; never imported by runtime code.
 - `server/serve.py` writes stats to `/data/stats.json` by default (Docker volume path); override with `STATS_PATH` env var for local use.
 - The `CLAUDE_DIR` env var overrides the `~/.claude` path in both `parse.py` and `serve.py`.

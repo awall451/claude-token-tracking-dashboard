@@ -15,7 +15,10 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
+try:
+    from .models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
+except ImportError:  # run as a script / imported via sys.path (server/serve.py)
+    from models import SessionStats, aggregate_by_day, aggregate_by_project, caveman_comparison, rolling_windows, lifetime_stats
 
 CLAUDE_DIR = pathlib.Path(os.environ.get("CLAUDE_DIR", str(pathlib.Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
@@ -63,69 +66,48 @@ def detect_plan() -> dict:
 
 
 def decode_project_path(encoded: str) -> str:
-    """Convert encoded dir name back to filesystem path."""
-    # '-home-dillon-lab-foo' → '/home/dillon/lab/foo'
-    # Edge: double hyphens in real paths are ambiguous; best-effort only
-    return encoded.replace("-", "/", 1) if encoded.startswith("-") else encoded
+    """Convert encoded dir name back to filesystem path (best-effort).
+
+    '-home-dillon-lab-foo' → '/home/dillon/lab/foo'. Real hyphens and dots are
+    lossy in the encoding, so history.jsonl / entry cwd are preferred when present.
+    """
+    return encoded.replace("-", "/")
 
 
-def load_history() -> dict[str, str]:
-    """Returns {sessionId: project_path}."""
-    mapping = {}
+def _read_history() -> tuple[dict[str, str], dict[str, str]]:
+    """Returns ({sessionId: project_path}, {sessionId: first prompt display})."""
+    projects: dict[str, str] = {}
+    names: dict[str, str] = {}
     if not HISTORY_FILE.exists():
-        return mapping
+        return projects, names
     for line in HISTORY_FILE.read_text(errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             obj = json.loads(line)
-            sid = obj.get("sessionId")
-            proj = obj.get("project", "")
-            if sid and proj:
-                mapping[sid] = proj
         except json.JSONDecodeError:
             continue
-    return mapping
+        sid = obj.get("sessionId")
+        if not sid:
+            continue
+        proj = obj.get("project", "")
+        if proj:
+            projects[sid] = proj
+        display = obj.get("display", "")
+        if display and display != "init" and sid not in names:
+            names[sid] = display
+    return projects, names
+
+
+def load_history() -> dict[str, str]:
+    """Returns {sessionId: project_path}."""
+    return _read_history()[0]
 
 
 def load_session_names() -> dict[str, str]:
-    """Returns {sessionId: name}. Prefers /rename custom-title; falls back to first display text."""
-    names = {}
-    # Fallback: first non-init display from history.jsonl
-    if HISTORY_FILE.exists():
-        for line in HISTORY_FILE.read_text(errors="replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                sid = obj.get("sessionId")
-                display = obj.get("display", "")
-                if sid and display and display != "init" and sid not in names:
-                    names[sid] = display
-            except json.JSONDecodeError:
-                continue
-    # Override with custom-title (/rename) entries found in session JSONL files
-    if PROJECTS_DIR.exists():
-        for project_dir in PROJECTS_DIR.iterdir():
-            if not project_dir.is_dir():
-                continue
-            for jsonl_file in project_dir.glob("*.jsonl"):
-                for line in jsonl_file.read_text(errors="replace").splitlines():
-                    line = line.strip()
-                    if not line or "custom-title" not in line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                        if obj.get("type") == "custom-title":
-                            sid = obj.get("sessionId") or jsonl_file.stem
-                            title = obj.get("customTitle", "")
-                            if sid and title:
-                                names[sid] = title
-                    except json.JSONDecodeError:
-                        continue
-    return names
+    """Returns {sessionId: first prompt display}. /rename titles are read per file in parse_session_file."""
+    return _read_history()[1]
 
 
 def _text_content(message: dict) -> str:
@@ -142,21 +124,36 @@ def _text_content(message: dict) -> str:
     return ""
 
 
-def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str], name_map: dict[str, str] | None = None) -> SessionStats | None:
-    """Parse one session JSONL file into a SessionStats."""
-    seen_request_ids: set[str] = set()
-    session_id = jsonl_path.stem
-    project_path = history_map.get(session_id, "")
-    session_name = (name_map or {}).get(session_id, "")
+def _to_ms(ts) -> int:
+    if isinstance(ts, (int, float)):
+        return int(ts)
+    if isinstance(ts, str) and ts:
+        try:
+            return int(ts)
+        except ValueError:
+            try:
+                return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+            except ValueError:
+                return 0
+    return 0
 
-    stats = SessionStats(session_id=session_id, project_path=project_path, session_name=session_name)
-    turns_raw: list[dict] = []  # per-turn records for rolling window calc
-    caveman_detected = False
-    caveman_mode = ""
 
+def parse_session_file(jsonl_path: pathlib.Path) -> SessionStats | None:
+    """Parse one session JSONL file into a SessionStats.
+
+    Independent of history.jsonl so results can be cached per file; the caller
+    resolves project_path/session_name from `cwd`/`custom_title` and history.
+    """
     lines = jsonl_path.read_text(errors="replace").splitlines()
     if not lines:
         return None
+
+    stats = SessionStats(session_id=jsonl_path.stem, project_path="")
+    caveman_detected = False
+    caveman_mode = ""
+    # requestId → (ts, message). Streaming writes several entries per request; subagent
+    # transcripts log partial usage on early chunks, so keep the entry with the most output.
+    requests: dict[str, tuple[int, dict]] = {}
 
     for line in lines:
         line = line.strip()
@@ -168,16 +165,7 @@ def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str], na
             continue
 
         entry_type = obj.get("type", "")
-        ts = obj.get("timestamp", 0)
-        if isinstance(ts, str):
-            try:
-                ts = int(ts)
-            except (ValueError, TypeError):
-                try:
-                    from datetime import datetime, timezone
-                    ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
-                except Exception:
-                    ts = 0
+        ts = _to_ms(obj.get("timestamp", 0))
 
         if ts:
             if not stats.start_ts or ts < stats.start_ts:
@@ -185,10 +173,20 @@ def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str], na
             if ts > stats.end_ts:
                 stats.end_ts = ts
 
-        if not project_path and obj.get("cwd"):
-            stats.project_path = obj["cwd"]
+        if not stats.cwd and obj.get("cwd"):
+            stats.cwd = obj["cwd"]
 
-        if entry_type == "user":
+        if entry_type == "cost-state":
+            sid = obj.get("sessionId") or stats.session_id
+            prev = stats.cost_states.get(sid)
+            if prev is None or obj.get("totalCostUSD", 0) >= prev.get("totalCostUSD", 0):
+                stats.cost_states[sid] = obj
+
+        elif entry_type == "custom-title":
+            if obj.get("customTitle"):
+                stats.custom_title = obj["customTitle"]
+
+        elif entry_type == "user":
             text = _text_content(obj.get("message", {}))
             if _CAVEMAN_RE.search(text):
                 caveman_detected = True
@@ -215,67 +213,148 @@ def parse_session_file(jsonl_path: pathlib.Path, history_map: dict[str, str], na
                         caveman_mode = "full"
 
         elif entry_type == "assistant":
-            request_id = obj.get("requestId", "")
-            if request_id and request_id in seen_request_ids:
-                continue  # duplicate streaming entry
-            if request_id:
-                seen_request_ids.add(request_id)
-
             msg = obj.get("message", {})
-            usage = msg.get("usage", {})
-
-            if not usage:
+            if not msg.get("usage"):
                 continue
+            key = obj.get("requestId") or obj.get("uuid") or f"line{len(requests)}"
+            prev = requests.get(key)
+            if prev is None or msg["usage"].get("output_tokens", 0) >= prev[1]["usage"].get("output_tokens", 0):
+                requests[key] = (prev[0] if prev else ts, msg)
 
-            model = msg.get("model", "unknown")
-            inp = usage.get("input_tokens", 0)
-            cc = usage.get("cache_creation_input_tokens", 0)
-            cr = usage.get("cache_read_input_tokens", 0)
-            out = usage.get("output_tokens", 0)
-            stats.models[model] += 1
-            stats.turns += 1
-            stats.input_tokens += inp
-            stats.cache_creation_tokens += cc
-            stats.cache_read_tokens += cr
-            stats.output_tokens += out
-            turns_raw.append({
-                "ts": ts,
-                "input": inp,
-                "cache_creation": cc,
-                "cache_read": cr,
-                "output": out,
-                "cost": inp + cc + out,
-            })
+    for ts, msg in sorted(requests.values(), key=lambda r: r[0]):
+        usage = msg["usage"]
+        inp = usage.get("input_tokens", 0)
+        cc = usage.get("cache_creation_input_tokens", 0)
+        cr = usage.get("cache_read_input_tokens", 0)
+        out = usage.get("output_tokens", 0)
+        model = msg.get("model", "unknown")
+        iter_models = [i.get("model") for i in usage.get("iterations") or [] if i.get("model")]
+        for m in iter_models or [model]:
+            stats.models[m] += 1
+        stats.turns += 1
+        stats.input_tokens += inp
+        stats.cache_creation_tokens += cc
+        stats.cache_read_tokens += cr
+        stats.output_tokens += out
+        cc_detail = usage.get("cache_creation") or {}
+        stats.cache_creation_5m_tokens += cc_detail.get("ephemeral_5m_input_tokens", 0)
+        stats.cache_creation_1h_tokens += cc_detail.get("ephemeral_1h_input_tokens", 0)
+        stats.thinking_tokens += (usage.get("output_tokens_details") or {}).get("thinking_tokens", 0)
+        stu = usage.get("server_tool_use") or {}
+        stats.web_search_requests += stu.get("web_search_requests", 0)
+        stats.web_fetch_requests += stu.get("web_fetch_requests", 0)
+        stats.turns_raw.append({
+            "ts": ts,
+            "model": model,
+            "input": inp,
+            "cache_creation": cc,
+            "cache_read": cr,
+            "output": out,
+            "cost": inp + cc + out,
+        })
 
-    if stats.turns == 0:
+    if stats.turns == 0 and not stats.cost_states:
         return None
 
     stats.caveman = caveman_detected
     stats.caveman_mode = caveman_mode
-    stats.turns_raw = turns_raw
     return stats
 
 
-def parse_all() -> list[SessionStats]:
-    if not PROJECTS_DIR.exists():
-        print(f"ERROR: {PROJECTS_DIR} not found", file=sys.stderr)
+def _reported_from_cost_state(cs: dict) -> dict:
+    model_usage = cs.get("modelUsage") or {}
+    total = 0
+    for u in model_usage.values():
+        total += sum(u.get(k, 0) for k in
+                     ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    return {
+        "cost_usd": round(cs.get("totalCostUSD", 0.0), 4),
+        "total_tokens": total,
+        "lines_added": cs.get("totalLinesAdded", 0),
+        "lines_removed": cs.get("totalLinesRemoved", 0),
+        "model_usage": model_usage,
+    }
+
+
+def _parse_cached(jsonl_file: pathlib.Path, cache: dict | None) -> SessionStats | None:
+    if cache is None:
+        return parse_session_file(jsonl_file)
+    st = jsonl_file.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    hit = cache.get(jsonl_file)
+    if hit and hit[0] == key:
+        return hit[1]
+    stats = parse_session_file(jsonl_file)
+    cache[jsonl_file] = (key, stats)
+    return stats
+
+
+def _session_files(project_dir: pathlib.Path):
+    """Yield (jsonl_file, parent_session_id or None) for main sessions and their subagents."""
+    for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+        yield jsonl_file, None
+    for jsonl_file in sorted(project_dir.glob("*/subagents/agent-*.jsonl")):
+        yield jsonl_file, jsonl_file.parent.parent.name
+
+
+def _read_agent_meta(jsonl_file: pathlib.Path) -> dict:
+    meta = jsonl_file.with_suffix(".meta.json")
+    try:
+        return json.loads(meta.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def parse_all(projects_dir: pathlib.Path | None = None,
+              history_map: dict[str, str] | None = None,
+              name_map: dict[str, str] | None = None,
+              cache: dict | None = None) -> list[SessionStats]:
+    """Parse every session + subagent transcript.
+
+    `cache` (optional, caller-owned dict) reuses results for files whose mtime/size
+    are unchanged — the long-running server passes one to make refreshes cheap.
+    """
+    projects_dir = projects_dir or PROJECTS_DIR
+    if not projects_dir.exists():
+        print(f"ERROR: {projects_dir} not found", file=sys.stderr)
         sys.exit(1)
 
-    history_map = load_history()
-    name_map = load_session_names()
-    sessions = []
+    if history_map is None or name_map is None:
+        hist_projects, hist_names = _read_history()
+        history_map = hist_projects if history_map is None else history_map
+        name_map = hist_names if name_map is None else name_map
 
-    for project_dir in sorted(PROJECTS_DIR.iterdir()):
+    sessions = []
+    cost_states: dict[str, dict] = {}
+    for project_dir in sorted(projects_dir.iterdir()):
         if not project_dir.is_dir():
             continue
         fallback_path = decode_project_path(project_dir.name)
-        for jsonl_file in sorted(project_dir.glob("*.jsonl")):
-            stats = parse_session_file(jsonl_file, history_map, name_map)
+        for jsonl_file, parent_id in _session_files(project_dir):
+            stats = _parse_cached(jsonl_file, cache)
             if stats is None:
                 continue
-            if not stats.project_path:
-                stats.project_path = fallback_path
+            for sid, cs in stats.cost_states.items():
+                prev = cost_states.get(sid)
+                if prev is None or cs.get("totalCostUSD", 0) >= prev.get("totalCostUSD", 0):
+                    cost_states[sid] = cs
+            if stats.turns == 0:
+                continue  # metadata-only file (e.g. *.orphaned-*.jsonl)
+            if parent_id:
+                meta = _read_agent_meta(jsonl_file)
+                stats.is_subagent = True
+                stats.parent_session_id = parent_id
+                stats.agent_type = meta.get("agentType", "")
+                stats.session_name = stats.custom_title or meta.get("description", "")
+                stats.project_path = history_map.get(parent_id) or stats.cwd or fallback_path
+            else:
+                stats.session_name = stats.custom_title or name_map.get(stats.session_id, "")
+                stats.project_path = history_map.get(stats.session_id) or stats.cwd or fallback_path
             sessions.append(stats)
+
+    for stats in sessions:
+        cs = None if stats.is_subagent else cost_states.get(stats.session_id)
+        stats.reported = _reported_from_cost_state(cs) if cs else {}
 
     return sessions
 
@@ -316,6 +395,10 @@ def build_output(sessions: list[SessionStats]) -> dict:
             "output_tokens": total_output,
             "total_cost_tokens": total_cost,
             "cache_hit_rate": round(total_cache_read / cache_total, 4) if cache_total else 0.0,
+            # Claude Code's own accounting where available (API-equivalent, not your plan bill)
+            "reported_cost_usd": round(sum(s.reported.get("cost_usd", 0) for s in sessions), 2),
+            "reported_tokens": sum(s.reported.get("total_tokens", 0) for s in sessions),
+            "reported_sessions": sum(1 for s in sessions if s.reported),
         },
         "lifetime": lifetime_stats(sessions, by_day),
         "has_caveman_plugin": _detect_caveman_plugin(CLAUDE_DIR),
@@ -337,6 +420,7 @@ def anonymize_output(output: dict) -> dict:
     out["by_project"] = {mapping.get(k, k): v for k, v in out["by_project"].items()}
     for s in out["sessions"]:
         s["project_path"] = mapping.get(s["project_path"], s["project_path"])
+        s["session_name"] = ""  # usually the first prompt text — never safe to share
     return out
 
 

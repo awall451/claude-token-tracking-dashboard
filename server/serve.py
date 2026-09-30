@@ -32,12 +32,14 @@ FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
 _stats_lock = threading.Lock()
 _last_refreshed: float = 0.0
+# Per-file parse results keyed by mtime/size; unchanged transcripts are not re-read.
+_parse_cache: dict = {}
 
 
 def refresh_stats() -> bool:
     global _last_refreshed
     try:
-        sessions = parser_mod.parse_all()
+        sessions = parser_mod.parse_all(cache=_parse_cache)
         output = parser_mod.build_output(sessions)
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = STATS_PATH.with_suffix(".tmp")
@@ -111,6 +113,12 @@ class Handler(BaseHTTPRequestHandler):
             # strip /frontend prefix if present
             rel = path.removeprefix("/frontend").lstrip("/") or "index.html"
             file_path = FRONTEND_DIR / rel
+
+        # Reject traversal (e.g. /../../data/.claude/history.jsonl)
+        file_path = file_path.resolve()
+        if not file_path.is_relative_to(FRONTEND_DIR.resolve()):
+            self.send_body(404, "text/plain", b"not found")
+            return
 
         if file_path.exists() and file_path.is_file():
             suffix = file_path.suffix.lower()

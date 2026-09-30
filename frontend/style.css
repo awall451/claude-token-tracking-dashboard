@@ -332,6 +332,7 @@ main {
 }
 
 .badge-caveman { background: #f0883e22; color: var(--orange); border: 1px solid var(--orange); }
+.badge-agent { background: #bc8cff22; color: var(--purple); border: 1px solid var(--purple); }
 .badge-normal  { background: #58a6ff22; color: var(--accent); border: 1px solid var(--accent); }
 
 .sessions-show-more {
