@@ -23,6 +23,17 @@ function fmt(n) {
   return String(n);
 }
 
+// Escape transcript-derived strings (prompts, paths) before interpolating into HTML.
+function esc(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function fmtUsd(n) {
+  return '$' + (n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(2));
+}
+
 function shortProject(path) {
   if (!path) return 'unknown';
   const parts = path.split('/');
@@ -46,8 +57,18 @@ function renderCards(totals, lifetime) {
     { label: 'Weekly Average',value: fmt(lt.weekly_average_cost_tokens || 0), sub: 'daily avg × 7' },
     { label: 'Peak Day',     value: fmt((lt.peak_day && lt.peak_day.cost_tokens) || 0), sub: peakDate, title: `Highest single-day total: ${peakDate}` },
   ];
+  if (totals.reported_sessions) {
+    cards.push({
+      label: 'API-Equivalent Cost',
+      value: fmtUsd(totals.reported_cost_usd || 0),
+      sub: `Claude Code's own tally · ${totals.reported_sessions} sessions`,
+      title: 'Sum of totalCostUSD from cost-state entries Claude Code writes into each transcript. '
+           + 'What this usage would cost at API list prices, not what a subscription bills. '
+           + `Includes side calls missing from transcripts (${fmt(totals.reported_tokens || 0)} tokens reported).`,
+    });
+  }
   document.getElementById('cards').innerHTML = cards.map(c => `
-    <div class="card"${c.title ? ` title="${c.title}"` : ''}>
+    <div class="card"${c.title ? ` title="${esc(c.title)}"` : ''}>
       <div class="label">${c.label}</div>
       <div class="value">${c.value}</div>
       ${c.sub ? `<div class="sub">${c.sub}</div>` : ''}
@@ -69,7 +90,7 @@ function renderLifetime(lt) {
     <strong>Heads-up:</strong> these numbers sum every session JSONL stored under
     <code>~/.claude/projects/</code> on this machine — not Anthropic's authoritative quota.
     Claude Code does not expose account-level totals locally; the official source of truth lives at
-    <code>claude.ai</code> (Max plan dashboard).
+    <code>claude.ai</code> (Settings → Usage).
     Tracking ${lt.days_tracked || 0} day${lt.days_tracked === 1 ? '' : 's'} of activity from
     <strong>${firstDate}</strong> to <strong>${lastDate}</strong>.
   `;
@@ -533,16 +554,23 @@ function openSessionDetail(session) {
     ? `<span class="badge badge-caveman">caveman${session.caveman_mode ? ' · ' + session.caveman_mode : ''}</span>`
     : `<span class="badge badge-normal">normal</span>`;
   const sessionNameHtml = session.session_name
-    ? `<div class="modal-session-name" title="${session.session_name.replace(/"/g, '&quot;')}">${session.session_name.replace(/</g, '&lt;').slice(0, 120)}</div>`
+    ? `<div class="modal-session-name" title="${esc(session.session_name)}">${esc(session.session_name.slice(0, 120))}</div>`
+    : '';
+  const agentBadge = session.is_subagent
+    ? ` <span class="badge badge-agent" title="Subagent of session ${esc(session.parent_session_id)}">${esc(session.agent_type || 'subagent')}</span>`
+    : '';
+  const reported = session.reported && session.reported.cost_usd !== undefined
+    ? `<span title="Claude Code's own tally (cost-state), API list prices">API-equiv: <strong>${fmtUsd(session.reported.cost_usd)}</strong></span>`
     : '';
   document.getElementById('modal-header').innerHTML = `
-    <h2>${shortProject(session.project_path)} &nbsp;${modeLabel}</h2>
+    <h2>${esc(shortProject(session.project_path))} &nbsp;${modeLabel}${agentBadge}</h2>
     ${sessionNameHtml}
     <div class="modal-meta">
       <span><strong>${fmtDate(session.start_ts)}</strong></span>
       <span>Duration: <strong>${duration}</strong></span>
       <span>Turns: <strong>${session.turns}</strong></span>
       <span>Cost tokens: <strong>${fmt(session.total_cost_tokens)}</strong></span>
+      ${reported}
       <span>Cache hit: <strong>${(session.cache_hit_rate * 100).toFixed(1)}%</strong></span>
       <span>Model: <strong>${models}</strong></span>
     </div>
@@ -692,11 +720,12 @@ function renderSessionsTable(sessions) {
   const cols = [
     { key: 'start_ts',           label: 'Date',        render: s => fmtDate(s.start_ts) },
     { key: 'project_path',       label: 'Project',     render: s => {
-      const proj = shortProject(s.project_path);
-      const name = s.session_name ? s.session_name.replace(/</g, '&lt;').slice(0, 60) : '';
-      const display = name ? `${proj}/<span class="session-name">${name}</span>` : proj;
+      const proj = esc(shortProject(s.project_path));
+      const name = s.session_name ? esc(s.session_name.slice(0, 60)) : '';
+      const agent = s.is_subagent ? '<span class="badge badge-agent" title="Subagent transcript">agent</span> ' : '';
+      const display = name ? `${agent}${proj}/<span class="session-name">${name}</span>` : agent + proj;
       const title = name ? `${s.project_path}\n${s.session_name}` : s.project_path;
-      return `<span title="${title}">${display}</span>`;
+      return `<span title="${esc(title)}">${display}</span>`;
     }},
     { key: 'turns',              label: 'Turns',       render: s => s.turns },
     { key: 'total_cost_tokens',  label: 'Cost Tokens', render: s => fmt(s.total_cost_tokens) },
@@ -717,7 +746,7 @@ function renderSessionsTable(sessions) {
     }).join('');
 
     const tbody = rows.map(s => `
-      <tr data-sid="${s.session_id}">
+      <tr data-sid="${esc(s.session_id)}">
         ${cols.map(c => `<td>${c.render(s)}</td>`).join('')}
       </tr>
     `).join('');

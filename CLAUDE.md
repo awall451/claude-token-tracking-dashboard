@@ -42,14 +42,18 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 
 ## Data Source Details
 
-**Path pattern:** `~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl`
+**Path pattern:** `~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl`. Subagent transcripts live at `<encoded-project-path>/<session-uuid>/subagents/agent-<id>.jsonl` with a sibling `agent-<id>.meta.json` (`agentType`, `description`); they are parsed as their own `SessionStats` with `is_subagent`/`parent_session_id`. `*.orphaned-*.jsonl` files are metadata-only copies (no assistant turns) — only their `cost-state` entries are used.
 
-Encoded project path replaces leading `/` with `-` (e.g. `/home/dillon/lab/foo` → `-home-dillon-lab-foo`). `~/.claude/history.jsonl` maps `sessionId → project_path` with a more reliable path string — the parser prefers this over decoding directory names.
+Encoded project path replaces every `/` (and `.`) with `-` (e.g. `/home/dillon/lab/foo` → `-home-dillon-lab-foo`). `~/.claude/history.jsonl` maps `sessionId → project_path` with a more reliable path string — the parser prefers this over decoding directory names.
 
 **Effective token cost** = `input_tokens + cache_creation_input_tokens + output_tokens`  
 Cache reads (`cache_read_input_tokens`) are separately tracked — they're cheaper per-token but still consume quota.
 
-**Duplicate entries:** Streaming causes multiple assistant entries per request. Always deduplicate by `requestId` before summing usage.
+**Duplicate entries:** Streaming causes multiple assistant entries per request. Always deduplicate by `requestId` before summing usage, keeping the entry with the **largest `output_tokens`** — subagent transcripts log partial usage on early chunks (first-chunk dedup undercounts output ~100×).
+
+**`cost-state` entries:** Claude Code writes cumulative per-session accounting (`totalCostUSD`, per-model `modelUsage`, lines added/removed). Multiple copies may exist (main file + orphaned files); take the one with the largest `totalCostUSD` per `sessionId`. Exposed as `session.reported` and `totals.reported_*`. It includes side calls (e.g. Haiku) absent from transcripts, so it can exceed transcript-derived totals.
+
+**Plan detection:** `detect_plan()` reads the `tengu_ultraplan_config` GrowthBook flag, which appears to gate the Ultraplan feature rather than indicate Max tier — treat as unreliable.
 
 **Caveman detection:** Two paths — (1) scan `user` entries for `<command-name>/caveman` or `caveman:caveman` in `message.content`, (2) scan `attachment` entries (type `hook_success` / `hook_additional_context`) for `CAVEMAN MODE ACTIVE` (hook-injected sessions). Tag the entire session as caveman if any turn matches. Mode variant (lite/full/ultra/wenyan) extracted from `<command-args>` tag or hook `level: X` text.
 
@@ -120,7 +124,7 @@ For any task in this project:
 
 ## TODO
 
-- Update README with community-sourced soft limit estimates per plan (empirically, $20 Max plan hits ~600K tokens/5h window; 5x Max ~3M; 20x Max ~12M). Note these are single-user data points, not Anthropic-confirmed values. Invite contributors to share their limit observations.
+- Update README with community-sourced soft limit estimates per plan (empirically, Pro plan hits ~600K tokens/5h window; 5x Max ~3M; 20x Max ~12M). Note these are single-user data points, not Anthropic-confirmed values. Invite contributors to share their limit observations.
 
 ## Key Invariants
 

@@ -20,6 +20,23 @@ class SessionStats:
     start_ts: int = 0
     end_ts: int = 0
     turns_raw: list = field(default_factory=list, repr=False)
+    # Upstream usage detail (Claude Code ≥ 2.1)
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
+    thinking_tokens: int = 0
+    web_search_requests: int = 0
+    web_fetch_requests: int = 0
+    # Raw facts from the transcript, resolved into project_path/session_name by the caller
+    cwd: str = ""
+    custom_title: str = ""
+    # Subagent transcripts (<session>/subagents/agent-*.jsonl)
+    is_subagent: bool = False
+    parent_session_id: str = ""
+    agent_type: str = ""
+    # Claude Code's own cumulative accounting ("cost-state" entries): API-equivalent USD and
+    # per-model usage, including side calls (titles, classifiers) absent from the transcript.
+    cost_states: dict = field(default_factory=dict, repr=False)  # {sessionId: raw entry}
+    reported: dict = field(default_factory=dict)
 
     @property
     def total_cost_tokens(self):
@@ -61,10 +78,28 @@ class SessionStats:
             "start_ts": self.start_ts,
             "end_ts": self.end_ts,
             "turns_raw": self.turns_raw,
+            "cache_creation_5m_tokens": self.cache_creation_5m_tokens,
+            "cache_creation_1h_tokens": self.cache_creation_1h_tokens,
+            "thinking_tokens": self.thinking_tokens,
+            "web_search_requests": self.web_search_requests,
+            "web_fetch_requests": self.web_fetch_requests,
+            "is_subagent": self.is_subagent,
+            "parent_session_id": self.parent_session_id,
+            "agent_type": self.agent_type,
+            "reported": self.reported,
         }
 
 
+def _utc_day(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
 def aggregate_by_day(sessions: list[SessionStats]) -> dict:
+    """Token totals per UTC day, bucketed by each turn's timestamp.
+
+    Sessions spanning midnight split across days. Session counts stay on the start day.
+    Sessions without per-turn data fall back to their start day.
+    """
     by_day = defaultdict(lambda: {
         "input_tokens": 0,
         "cache_creation_tokens": 0,
@@ -79,20 +114,30 @@ def aggregate_by_day(sessions: list[SessionStats]) -> dict:
     for s in sessions:
         if not s.start_ts:
             continue
-        from datetime import datetime, timezone
-        day = datetime.fromtimestamp(s.start_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        d = by_day[day]
-        d["input_tokens"] += s.input_tokens
-        d["cache_creation_tokens"] += s.cache_creation_tokens
-        d["cache_read_tokens"] += s.cache_read_tokens
-        d["output_tokens"] += s.output_tokens
-        d["total_cost_tokens"] += s.total_cost_tokens
-        d["turns"] += s.turns
+        d = by_day[_utc_day(s.start_ts)]
         d["sessions"] += 1
         if s.caveman:
             d["caveman_sessions"] += 1
         else:
             d["normal_sessions"] += 1
+
+        turns = [t for t in s.turns_raw if t.get("ts")]
+        if not turns:
+            d["input_tokens"] += s.input_tokens
+            d["cache_creation_tokens"] += s.cache_creation_tokens
+            d["cache_read_tokens"] += s.cache_read_tokens
+            d["output_tokens"] += s.output_tokens
+            d["total_cost_tokens"] += s.total_cost_tokens
+            d["turns"] += s.turns
+            continue
+        for t in turns:
+            td = by_day[_utc_day(t["ts"])]
+            td["input_tokens"] += t["input"]
+            td["cache_creation_tokens"] += t["cache_creation"]
+            td["cache_read_tokens"] += t["cache_read"]
+            td["output_tokens"] += t["output"]
+            td["total_cost_tokens"] += t["cost"]
+            td["turns"] += 1
     return dict(sorted(by_day.items()))
 
 
