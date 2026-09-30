@@ -11,14 +11,66 @@
   <header>
     <h1>Claude Token Tracker</h1>
     <span id="generated-at"></span>
+    <nav class="tabs" id="tabs" aria-label="Views">
+      <a href="#/projects" data-tab="projects">Projects</a>
+      <a href="#/sessions" data-tab="sessions">Sessions</a>
+      <a href="#/usage" data-tab="usage">Usage</a>
+      <a href="#/caveman" data-tab="caveman">Caveman</a>
+    </nav>
   </header>
 
   <main>
+    <!-- ── Projects (home) ───────────────────────────────────────── -->
+    <section class="panel" data-view="projects" id="projects-view">
+      <h2>Projects
+        <span class="limit-hint">
+          <span class="seg" data-range-seg></span>
+          group:
+          <select id="projects-group" title="Group by project, or by a tag from tags.toml (client, kind, …)"></select>
+        </span>
+      </h2>
+      <p class="chart-sub">Everything Claude spent on each project — tokens, dollars, time, energy — attributed per turn from the files each tool call touched. Tap a project for its timeline and sessions.</p>
+      <div class="edu-callout" id="projects-callout"></div>
+      <div class="stat-grid" id="projects-kpis"></div>
+      <div class="scroll-x" id="projects-table-wrap"></div>
+    </section>
+
+    <!-- ── Project detail ─────────────────────────────────────────── -->
+    <section class="panel" data-view="project" id="project-view">
+      <h2>
+        <a href="#/projects" class="back" title="Back to all projects">← Projects</a>
+        <span id="project-title"></span>
+        <span id="project-tags"></span>
+        <span class="limit-hint"><span class="seg" data-range-seg></span></span>
+      </h2>
+      <div class="edu-callout" id="project-callout" hidden></div>
+      <div class="stat-grid" id="project-kpis"></div>
+      <h3 style="margin:20px 0 4px">Spend by day</h3>
+      <p class="chart-sub">API-list-price dollars per day; lighter bars are backfill estimates from prompt counts</p>
+      <div class="chart-wrap"><canvas id="chart-project-daily"></canvas></div>
+      <div class="split">
+        <div>
+          <h3 style="margin:20px 0 4px">Models</h3>
+          <p class="chart-sub">Share of this project's turns by model</p>
+          <div id="project-models"></div>
+        </div>
+        <div>
+          <h3 style="margin:20px 0 4px">Signals</h3>
+          <p class="chart-sub">Raw effort / complexity indicators — no composite score</p>
+          <div id="project-signals"></div>
+        </div>
+      </div>
+      <h3 style="margin:20px 0 4px">Sessions</h3>
+      <p class="chart-sub">Sessions (and subagents) that worked on this project in the range — tap one for turn-by-turn detail</p>
+      <div class="scroll-x" id="project-sessions-wrap"></div>
+    </section>
+
+    <!-- ── Usage ──────────────────────────────────────────────────── -->
     <!-- Summary cards -->
-    <section class="cards" id="cards"></section>
+    <section class="cards" id="cards" data-view="usage"></section>
 
     <!-- Rolling usage / limit gauge -->
-    <section class="panel" id="rolling-panel">
+    <section class="panel" id="rolling-panel" data-view="usage">
       <h2>Rolling Usage
         <span class="limit-hint">5h window = Anthropic reset period &nbsp;|&nbsp; plan:
           <select id="plan-select">
@@ -40,9 +92,10 @@
     </section>
 
     <!-- Caveman comparison -->
-    <section class="panel" id="caveman-panel">
+    <section class="panel" id="caveman-panel" data-view="caveman">
       <h2>Caveman vs Normal</h2>
-      <p class="chart-sub">Caveman mode compresses Claude's responses to save tokens — the core metric of this dashboard</p>
+      <p class="chart-sub">Caveman mode compresses Claude's responses to save tokens</p>
+      <div class="edu-callout"><strong>Approximate.</strong> A session counts as caveman if caveman was active at any point, and sessions differ in what they did — this is an observational comparison, not a controlled A/B test. Backfill estimates are excluded.</div>
       <div id="caveman-onboarding" hidden>
         <div class="edu-callout">
           <strong>Caveman mode not detected.</strong> Caveman compresses Claude's output ~75%, cutting token usage significantly.
@@ -67,7 +120,7 @@
     </section>
 
     <!-- Caveman adoption trend -->
-    <section class="panel" id="caveman-adoption-panel">
+    <section class="panel" id="caveman-adoption-panel" data-view="caveman">
       <h2>Caveman Adoption</h2>
       <p class="chart-sub">Sessions per day — caveman (orange) vs normal (blue)</p>
       <div class="chart-wrap">
@@ -76,7 +129,7 @@
     </section>
 
     <!-- Tokens by day -->
-    <section class="panel">
+    <section class="panel" data-view="usage">
       <h2>Tokens by Day</h2>
       <p class="chart-sub">Daily totals (stacked) with 7-day rolling average overlay (orange line)</p>
       <div class="chart-wrap tall">
@@ -85,7 +138,7 @@
     </section>
 
     <!-- Lifetime totals & averages -->
-    <section class="panel" id="impact-panel">
+    <section class="panel" id="impact-panel" data-view="usage">
       <h2>Environmental Impact <span class="sessions-hint">estimates · low – central – high</span></h2>
       <p class="chart-sub">Electricity, on-site cooling water and carbon implied by your token counts, per the coefficients in <code>parser/energy.toml</code></p>
       <div class="edu-callout" id="impact-callout"></div>
@@ -94,7 +147,7 @@
       <div id="impact-table-wrap" class="scroll-x"></div>
     </section>
 
-    <section class="panel" id="lifetime-panel">
+    <section class="panel" id="lifetime-panel" data-view="usage">
       <h2>Lifetime Totals &amp; Averages</h2>
       <p class="chart-sub">Everything Claude Code has logged on this machine, since first session</p>
       <div class="edu-callout" id="lifetime-callout"></div>
@@ -102,7 +155,7 @@
     </section>
 
     <!-- By project -->
-    <section class="panel" id="project-panel">
+    <section class="panel" id="project-panel" data-view="usage">
       <h2>By Project
         <span class="limit-hint">group by:
           <select id="project-groupby" title="How turns are grouped. Project/tag attribution comes from ~/.config/claude-token-tracker/tags.toml"></select>
@@ -116,7 +169,7 @@
     </section>
 
     <!-- Model breakdown -->
-    <section class="panel half">
+    <section class="panel half" data-view="usage">
       <h2>Model Usage</h2>
       <div class="chart-wrap">
         <canvas id="chart-models"></canvas>
@@ -124,7 +177,7 @@
     </section>
 
     <!-- Cache efficiency -->
-    <section class="panel half">
+    <section class="panel half" data-view="usage">
       <h2>Cache Efficiency</h2>
       <div class="chart-wrap">
         <canvas id="chart-cache"></canvas>
@@ -132,8 +185,13 @@
     </section>
 
     <!-- Session explorer -->
-    <section class="panel" id="sessions-panel">
-      <h2>Session Explorer <span class="sessions-hint">click any row to inspect turn-by-turn</span></h2>
+    <section class="panel" id="sessions-panel" data-view="sessions">
+      <h2>Session Explorer
+        <span class="limit-hint">project:
+          <select id="sessions-project" title="Show only sessions that worked on this project"><option value="">All projects</option></select>
+        </span>
+      </h2>
+      <p class="chart-sub">Every session and subagent, newest first — tap a row to inspect it turn-by-turn</p>
       <div id="sessions-table-wrap" class="scroll-x"></div>
     </section>
   </main>
@@ -164,5 +222,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="projects.js"></script>
+  <script src="router.js"></script>
 </body>
 </html>
