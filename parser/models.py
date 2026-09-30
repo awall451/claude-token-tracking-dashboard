@@ -113,6 +113,8 @@ class SessionStats:
             "projects": self.projects_breakdown(),
             "wh": self.wh,
             "estimated": self.estimated,
+            "api_usd": round(sum(t.get("api_usd") or 0 for t in self.turns_raw), 4),
+            "sub_usd": round(sum(t.get("sub_usd") or 0 for t in self.turns_raw), 4),
             "cache_creation_5m_tokens": self.cache_creation_5m_tokens,
             "cache_creation_1h_tokens": self.cache_creation_1h_tokens,
             "thinking_tokens": self.thinking_tokens,

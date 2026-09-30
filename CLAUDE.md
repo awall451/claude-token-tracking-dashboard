@@ -44,6 +44,10 @@ curl -X POST http://localhost:9420/api/refresh   # force re-parse
 
 **`parser/quota.py`** + **`extras/statusline-tee.sh`** — real Pro/Max quota. The wrapper logs `{ts, session_id, rate_limits}` (epoch seconds; `five_hour`/`seven_day` each `{used_percentage, resets_at}`) to `QUOTA_LOG` (default `<CLAUDE_DIR>/token-tracker/quota.jsonl`) and pipes stdin to the real statusline. `summarize()` → latest % per window, `implied_limit_cost_tokens` (window cost tokens ÷ %; only when ≥5%), 15-min history. When present it overrides `plan_info.suggested_limit`.
 
+**`parser/pricing.py`** + **`parser/pricing.toml`** — `turn_usd()` (API list price; unsplit cache writes price at the 5m rate) and `annotate()` → per-turn `api_usd` + `sub_usd` (monthly fee from tags.toml `[billing]` × turn's share of that month's api_usd; `None` when unconfigured). Keep pricing.toml sourced from the claude-api skill reference and ordered specific-before-family.
+
+**`parser/metrics.py`** — `by_project(sessions, group='project'|'tag:<k>', start_ms, end_ms)` and `project_detail()`; everything summed per turn so ranges/groupings stay consistent. Subagents fold into their parent session count; estimated turns count one prompt each; active hours = gaps ≤ `IDLE_GAP_MIN` (15).
+
 **`parser/models.py`** — pure data logic with no I/O. `SessionStats` dataclass holds per-session aggregates. Module-level functions (`aggregate_by_day`, `aggregate_by_project`, `caveman_comparison`, `rolling_windows`) transform lists of `SessionStats` into the nested dicts that `stats.json` emits. The 5h rolling window in `rolling_windows()` is the key metric since Anthropic uses a 5-hour reset window for rate limiting.
 
 **`server/serve.py`** — single-file HTTP server. Imports `parser/parse.py` directly (via `sys.path` insertion) and runs `refresh_stats()` on a background thread every `REFRESH_INTERVAL` seconds. Serves `frontend/` as static files and `stats.json` from `STATS_PATH`. Two API endpoints: `POST /api/refresh` (force re-parse) and `GET /api/status`.

@@ -18,8 +18,8 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 try:
-    from . import energy, quota
-    from .attribution import attribute_sessions, extract_paths, load_config
+    from . import energy, metrics, pricing, quota
+    from .attribution import TAGS_CONFIG, attribute_sessions, extract_paths, load_config
     from .models import (
         SessionStats,
         aggregate_by_day,
@@ -33,8 +33,10 @@ try:
     )
 except ImportError:  # run as a script / imported via sys.path (server/serve.py)
     import energy
+    import metrics
+    import pricing
     import quota
-    from attribution import attribute_sessions, extract_paths, load_config
+    from attribution import TAGS_CONFIG, attribute_sessions, extract_paths, load_config
     from models import (
         SessionStats,
         aggregate_by_day,
@@ -485,6 +487,8 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
     attribute_sessions(sessions, tags_config if tags_config is not None else load_config())
     energy_config = energy_config or energy.load_config()
     energy.annotate_sessions(sessions, energy_config)
+    billing = pricing.load_billing(TAGS_CONFIG)
+    pricing.annotate(sessions, pricing.load_config(), billing)
     total_input = sum(s.input_tokens for s in sessions)
     total_cache_creation = sum(s.cache_creation_tokens for s in sessions)
     total_cache_read = sum(s.cache_read_tokens for s in sessions)
@@ -533,6 +537,8 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
             "reported_cost_usd": round(sum(s.reported.get("cost_usd", 0) for s in sessions), 2),
             "reported_tokens": sum(s.reported.get("total_tokens", 0) for s in sessions),
             "reported_sessions": sum(1 for s in sessions if s.reported),
+            "api_usd": round(sum(t["api_usd"] for s in sessions for t in s.turns_raw), 2),
+            "estimated_api_usd": round(sum(t["api_usd"] for s in sessions for t in s.turns_raw if t.get("estimated")), 2),
         },
         "lifetime": lifetime_stats(sessions, by_day),
         "has_caveman_plugin": _detect_caveman_plugin(CLAUDE_DIR),
@@ -542,6 +548,9 @@ def build_output(sessions: list[SessionStats], tags_config=None, energy_config=N
         "by_project": by_project,
         "by_launch_dir": aggregate_by_project(sessions),
         "by_tag": by_tag,
+        # Projects-first rollups (all time); /api/projects serves other ranges and groupings
+        "projects": metrics.by_project(sessions),
+        "billing_configured": bool(billing.plans),
         "impact": _impact_block(sessions, by_day, by_project, by_tag, energy_config),
         "sessions": [s.to_dict() for s in sorted(sessions, key=lambda x: x.start_ts)],
     }
